@@ -1,0 +1,43 @@
+# dsh-runtime-kit — DSH bundle patch
+# 宿主半侧由本包 dist/index.js 统一 apply：
+#   - 提供 runtimeKit 服务（Registry / ContextGovernance / Sandbox / Audit / FastPath / PTC）
+#   - 宿主提供 'commands' 服务后注册 runtime_kit_* 斜杠命令
+- insert:
+    - id: runtime-kit
+      name: 'dsh-runtime-kit'
+      config:
+        context:
+          maxReturnBytes: 4096
+          fieldsProjection: true
+          prunerEnabled: true
+          compactionEnabled: true
+          lazyLoadTools: true
+        loop:
+          preset: code
+          disabledLayers:
+            - plan
+            - todo
+            - goal
+            - subagent
+          maxParallelToolCalls: 8
+          enableCustomLoop: false
+        sandbox:
+          mode: workspace-write
+          approval: ask
+          rules:
+            files: []
+            commands: []
+            network: []
+          networkDefault: deny
+          backupEnabled: true
+          deletionProtection: true
+          injectionGuard: true
+          sensitiveProtection: true
+          shell: pwsh
+          workspaceTrust: false
+          toolControl: {}
+        audit:
+          mode: append-only
+          desensitize: true
+          exportable: true
+          retentionDays: 90

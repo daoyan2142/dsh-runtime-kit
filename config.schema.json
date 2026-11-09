@@ -1,0 +1,202 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dsh-runtime-kit Configuration",
+  "type": "object",
+  "properties": {
+    "context": {
+      "type": "object",
+      "properties": {
+        "maxReturnBytes": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 65536,
+          "default": 4096,
+          "description": "单工具返回体硬上限（字节）"
+        },
+        "fieldsProjection": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用字段投影"
+        },
+        "prunerEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用长会话 pruner"
+        },
+        "compactionEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用 compaction"
+        },
+        "lazyLoadTools": {
+          "type": "boolean",
+          "default": true,
+          "description": "工具 schema 按需加载（对标 ToolSearch/Defer）"
+        }
+      },
+      "additionalProperties": false
+    },
+    "loop": {
+      "type": "object",
+      "properties": {
+        "preset": {
+          "type": "string",
+          "enum": ["minimal", "code", "default"],
+          "default": "code",
+          "description": "基础 preset"
+        },
+        "disabledLayers": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["plan", "todo", "goal", "subagent"] },
+          "default: ["plan", "todo", "goal", "subagent"],
+          "description": "关闭的重编排层"
+        },
+        "maxParallelToolCalls": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "default": 8,
+          "description": "并发上限（仅只读工具）"
+        },
+        "enableCustomLoop": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否启用 C5 自定义 loop（并发/屏障/恢复）"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sandbox": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["read-only", "workspace-write", "danger-full-access"],
+          "default": "workspace-write",
+          "description": "三档基线权限"
+        },
+        "approval": {
+          "type": "string",
+          "enum": ["auto", "ask", "deny"],
+          "default": "ask",
+          "description": "越界/高危操作审批模式"
+        },
+        "rules": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "read": { "type": "string", "enum": ["allow", "ask", "deny"] },
+                  "write": { "type": "string", "enum": ["allow", "ask", "deny"] },
+                  "delete": { "type": "string", "enum": ["allow", "ask", "deny"] }
+                },
+                "required": ["pattern"]
+              }
+            },
+            "commands": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "prefix": { "type": "string" },
+                  "action": { "type": "string", "enum": ["allow", "ask", "deny"] }
+                },
+                "required": ["prefix"]
+              }
+            },
+            "network": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "domain": { "type": "string" },
+                  "action": { "type": "string", "enum": ["allow", "ask", "deny"] }
+                },
+                "required": ["domain"]
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "networkDefault": {
+          "type": "string",
+          "enum": ["allow", "ask", "deny"],
+          "default": "deny",
+          "description": "默认网络策略"
+        },
+        "backupEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "修改已有文件前生成快照"
+        },
+        "deletionProtection": {
+          "type": "boolean",
+          "default": true,
+          "description": "删除优先进回收站"
+        },
+        "injectionGuard": {
+          "type": "boolean",
+          "default": true,
+          "description": "工具返回诱导指令检测"
+        },
+        "sensitiveProtection": {
+          "type": "boolean",
+          "default": true,
+          "description": "凭据/密文参与上下文、输出还原"
+        },
+        "shell": {
+          "type": "string",
+          "enum": ["pwsh", "native"],
+          "default": "pwsh",
+          "description": "Windows 强制 pwsh，Linux 原生"
+        },
+        "workspaceTrust": {
+          "type": "boolean",
+          "default": false,
+          "description": "工作区信任状态（未信任进入受限模式）"
+        },
+        "toolControl": {
+          "type": "object",
+          "description": "工具粒度启停：工具名 -> true/false",
+          "additionalProperties": { "type": "boolean" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["append-only", "off"],
+          "default": "append-only",
+          "description": "审计模式"
+        },
+        "desensitize": {
+          "type": "boolean",
+          "default": true,
+          "description": "脱敏（密码/Cookie/token）"
+        },
+        "exportable": {
+          "type": "boolean",
+          "default": true,
+          "description": "日志可导出"
+        },
+        "retentionDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365,
+          "default": 90,
+          "description": "日志保留天数"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["context", "loop", "sandbox", "audit"],
+  "additionalProperties": false
+}

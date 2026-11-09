@@ -1,0 +1,75 @@
+{
+  "name": "dsh-runtime-kit",
+  "version": "0.1.0",
+  "description": "DSH runtime plugin: context governance, fast path, PTC orchestration, sandbox isolation and audit — zero business dependencies",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "context-governance",
+    "fast-path",
+    "ptc",
+    "sandbox",
+    "audit"
+  ],
+  "author": "daoyan2142",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/daoyan2142/dsh-runtime-kit.git"
+  },
+  "homepage": "https://github.com/daoyan2142/dsh-runtime-kit#readme",
+  "bugs": {
+    "url": "https://github.com/daoyan2142/dsh-runtime-kit/issues"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w",
+    "test": "vitest run",
+    "test:smoke": "node test/smoke.mjs",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0",
+    "@types/node": "^20.0.0",
+    "eslint": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "type": "module",
+  "files": [
+    "dist",
+    "patch.yml",
+    "config.schema.json",
+    "test",
+    "LICENSE"
+  ],
+  "dsh": {
+    "plugin": {
+      "entry": "dist/index.js",
+      "services": ["runtimeKit"],
+      "tools": [],
+      "configSchema": "config.schema.json"
+    },
+    "bundle": {
+      "patch": "./patch.yml",
+      "rows": [
+        {
+          "rowId": "runtime-kit",
+          "moduleName": "dsh-runtime-kit",
+          "entryId": "include:runtime-kit"
+        }
+      ],
+      "removable": true
+    },
+    "manifestVersion": 1
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
