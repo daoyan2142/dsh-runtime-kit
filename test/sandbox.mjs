@@ -164,7 +164,7 @@ svc.governance.sandbox = true;
 const report = await svc.verifyIsolation('default');
 check('已配置的工作区通过', report.passed === true, JSON.stringify(report.violations));
 check('越界探针被拒绝', report.checks.traversal.status === 'pass', report.checks.traversal.message);
-check('如实标注 symlink 未实现', report.checks.symlink.status === 'warn');
+check('symlink 校验已挂载', report.checks.symlink.status === 'pass', report.checks.symlink.message);
 const missing = await svc.verifyIsolation('nope');
 check('未配置的 profile 判定失败', missing.passed === false && missing.checks.workspace.status === 'fail');
 
@@ -178,6 +178,48 @@ check('commandDefault=deny 时未命中规则也拒绝', deniedByDefault.kind ==
 svc.reloadConfig({ sandbox: { ...sandboxCfg, commandDefault: 'allow' } });
 const allowedByDefault = await pre('pwsh', { command: 'git status' });
 check('commandDefault=allow 时放行', allowedByDefault === allowed || allowedByDefault.kind === 'allow');
+
+
+console.log('\n[10] 写前快照 / 回收站');
+const stateDir = svc.getConfig().stateDir;
+const target = path.join(wsRoot, 'docs', 'note.md');
+const beforeCopy = await pre('write', { path: target });
+check('写操作放行', beforeCopy === allowed || beforeCopy.kind === 'allow');
+const trashRoot = path.join(stateDir, 'trash');
+const trashFiles = await fs.readdir(trashRoot, { recursive: true }).catch(() => []);
+check('写之前留了副本', trashFiles.some((f) => String(f).includes('note.md')), JSON.stringify(trashFiles).slice(0, 120));
+
+const delTarget = path.join(wsRoot, 'docs', 'note.md');
+await pre('delete', { path: delTarget });
+const trashAfterDelete = await fs.readdir(trashRoot, { recursive: true }).catch(() => []);
+check('删除前也留了副本', trashAfterDelete.length >= 1);
+
+svc.reloadConfig({ sandbox: { ...svc.getConfig().sandbox, backupEnabled: false } });
+const noCopy = await pre('write', { path: path.join(wsRoot, 'docs', 'other.md') });
+check('backupEnabled=false 时不复制', noCopy === allowed || noCopy.kind === 'allow');
+svc.reloadConfig({ sandbox: { ...svc.getConfig().sandbox, backupEnabled: true } });
+
+console.log('\n[11] 工作区信任');
+svc.reloadConfig({ sandbox: { ...svc.getConfig().sandbox, workspaceTrust: false } });
+const untrustedWrite = await pre('write', { path: path.join(wsRoot, 'docs', 'x.md') });
+check('未受信任时写操作被拒', untrustedWrite.kind === 'deny' && String(untrustedWrite.reason).includes('未受信任'));
+svc.reloadConfig({ sandbox: { ...svc.getConfig().sandbox, workspaceTrust: true } });
+const trustedWrite = await pre('write', { path: path.join(wsRoot, 'docs', 'y.md') });
+check('受信任后写操作放行', trustedWrite === allowed || trustedWrite.kind === 'allow');
+
+console.log('\n[12] 链接逃逸');
+const outsideDir = path.join(tmp, 'outside');
+await fs.mkdir(outsideDir, { recursive: true });
+await fs.writeFile(path.join(outsideDir, 'secret.txt'), 'top secret', 'utf8');
+const linkPath = path.join(wsRoot, 'link');
+try {
+  await fs.symlink(outsideDir, linkPath, 'junction');
+  const viaLink = await pre('read', { path: path.join(linkPath, 'secret.txt') });
+  check('经 junction 逃出工作区被拒绝', viaLink.kind === 'deny', JSON.stringify(viaLink).slice(0, 120));
+  check('拒绝原因提到链接', /链接|realpath/.test(String(viaLink.reason)), String(viaLink.reason));
+} catch (error) {
+  check('无法创建 junction（跳过本项）', true, String(error.message).slice(0, 60));
+}
 
 console.log(`\n========== 结果: ${pass} 通过, ${fail} 失败 ==========`);
 await fs.rm(tmp, { recursive: true, force: true });

@@ -178,8 +178,8 @@
         },
         "workspaceTrust": {
           "type": "boolean",
-          "default": false,
-          "description": "工作区信任状态（未信任进入受限模式）"
+          "default": true,
+          "description": "工作区信任状态；设为 false 则只允许只读（默认信任，因为工作区是你自己配的）"
         },
         "toolControl": {
           "type": "object",

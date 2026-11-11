@@ -855,7 +855,7 @@ const DEFAULT_CONFIG = {
     injectionGuard: true,
     sensitiveProtection: true,
     shell: 'pwsh',
-    workspaceTrust: false,
+    workspaceTrust: true,
     toolControl: {},
   },
   audit: { mode: 'append-only', desensitize: true, exportable: true, retentionDays: 90 },

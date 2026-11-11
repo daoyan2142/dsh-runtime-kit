@@ -9,7 +9,7 @@
 // through the same normalizer the startup path uses, then persists to
 // `<stateDir>/governance.json` so a restart keeps the choice.
 // ============================================================================
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { normalizeGovernance } from '../hooks/policy.js';
 import { governanceStats } from '../hooks/index.js';
@@ -82,6 +82,35 @@ function pickGovernance(input) {
     }
     return out;
 }
+/** 从审计流水派生实测指标——这是唯一有真实数据的来源。 */
+function metricsFromAudit(entries) {
+    const byTool = {};
+    let blocked = 0;
+    let asked = 0;
+    let redacted = 0;
+    let truncated = 0;
+    let trashed = 0;
+    for (const entry of entries) {
+        const tool = String(entry?.tool ?? 'unknown');
+        byTool[tool] = (byTool[tool] ?? 0) + 1;
+        if (entry?.result === 'BLOCKED')
+            blocked += 1;
+        if (entry?.result === 'ASKED')
+            asked += 1;
+        const note = String(entry?.error ?? '');
+        if (note.startsWith('redacted'))
+            redacted += 1;
+        if (note.startsWith('truncated'))
+            truncated += 1;
+        if (note.startsWith('trash'))
+            trashed += 1;
+    }
+    const top = Object.entries(byTool)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([name, count]) => ({ name, count }));
+    return { total: entries.length, blocked, asked, redacted, truncated, trashed, top };
+}
 function sandboxSummary(config) {
     const sandbox = config?.sandbox ?? {};
     const rules = sandbox.rules ?? {};
@@ -106,10 +135,21 @@ function sandboxSummary(config) {
 }
 async function buildState(service) {
     const config = service.getConfig?.() ?? {};
-    const [health, audit] = await Promise.all([
+    const [health, auditAll] = await Promise.all([
         service.healthCheck().catch((error) => ({ status: 'unhealthy', error: String(error?.message ?? error) })),
-        service.getAuditLogs({ limit: 20 }).catch(() => []),
+        service.getAuditLogs({ limit: 200 }).catch(() => []),
     ]);
+    const audit = auditAll.slice(-20);
+    const observed = metricsFromAudit(auditAll);
+    let trashFiles = 0;
+    try {
+        const stateDir = config.stateDir;
+        if (stateDir)
+            trashFiles = (await readdir(join(stateDir, 'trash'), { recursive: true })).length;
+    }
+    catch {
+        trashFiles = 0;
+    }
     const isolation = await verifyIsolation(service, normalizeGovernance(service.governance ?? config.governance).profile).catch(() => null);
     return {
         health,
@@ -119,6 +159,8 @@ async function buildState(service) {
         context: config.context ?? {},
         loop: config.loop ?? {},
         audit,
+        observed,
+        trash: { files: trashFiles },
         truncation: governanceStats(service),
         registry: {
             tools: (service.registry?.listTools?.() ?? []).map((tool) => tool.name),

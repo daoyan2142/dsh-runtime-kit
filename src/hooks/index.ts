@@ -16,6 +16,7 @@
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { installWorkspaces } from '../workspaces/index.js';
+import { snapshotPaths, trashStamp } from '../guard/index.js';
 import { join } from 'node:path';
 import {
   DEFAULT_GOVERNANCE,
@@ -158,6 +159,10 @@ export function evaluateCall(
 
   const targets = extractTargets(exec?.arguments);
   const operation = inferFileOperation(tool);
+  // 未受信任的工作区降级为只读：写/删一律拒绝。
+  if (sandboxConfig?.workspaceTrust === false && operation !== 'read') {
+    return { action: 'deny', reason: '工作区未受信任，只允许只读操作', rule: 'trust' };
+  }
   const commandRules = Array.isArray(sandboxConfig?.rules?.commands) ? sandboxConfig.rules.commands : [];
   const commandDefault = sandboxConfig?.commandDefault === 'deny' || sandboxConfig?.commandDefault === 'ask' ? sandboxConfig.commandDefault : 'allow';
 
@@ -349,7 +354,39 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
     try {
       if (!config.enabled || !config.sandbox) return next();
       const verdict = evaluateCall(exec, service.sandbox, config, service.getConfig?.()?.sandbox);
-      if (verdict.action === 'allow') return next();
+      if (verdict.action === 'allow') {
+        // 放行之前先给会被改动的文件留一份副本（backupEnabled / deletionProtection）
+        const sandboxConfig = service.getConfig?.()?.sandbox ?? {};
+        const operation = inferFileOperation(String(exec?.name ?? ''));
+        const wantsCopy =
+          operation === 'write'
+            ? sandboxConfig.backupEnabled !== false
+            : operation === 'delete'
+              ? sandboxConfig.deletionProtection !== false
+              : false;
+        if (wantsCopy) {
+          const targets = extractTargets(exec?.arguments);
+          if (targets.paths.length) {
+            const copy = await snapshotPaths(targets.paths, {
+              stateDir: service.getConfig?.()?.stateDir,
+              enabled: true,
+              stamp: trashStamp(),
+            });
+            if (copy.saved) {
+              audit(service, config, {
+                profile: config.profile,
+                tool: String(exec?.name ?? 'unknown'),
+                action: 'call',
+                paramsHash: shortHash(exec?.arguments),
+                result: 'SUCCESS',
+                durationMs: 0,
+                error: `trash:${copy.saved}`,
+              });
+            }
+          }
+        }
+        return next();
+      }
 
       audit(service, config, {
         profile: config.profile,

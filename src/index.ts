@@ -67,7 +67,7 @@ const DEFAULT_CONFIG: PluginConfig = {
     injectionGuard: true,
     sensitiveProtection: true,
     shell: 'pwsh',
-    workspaceTrust: false,
+    workspaceTrust: true,
     toolControl: {},
   },
   audit: {

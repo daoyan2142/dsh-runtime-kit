@@ -10,7 +10,8 @@
 // ============================================================================
 
 import { stat } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 export interface WorkspaceInput {
   profile: string;
@@ -187,7 +188,10 @@ export async function verifyIsolation(service: ServiceLike, profile: string): Pr
     : { status: 'pass', message: `网络默认 ${network}` };
   if (network === 'allow') violations.push('network default is allow');
 
-  checks.symlink = { status: 'warn', message: '当前版本不做 realpath 校验，junction 逃逸检测未实现' };
+  const hardened = Boolean((service.sandbox as any).__realpathHardened);
+  checks.symlink = hardened
+    ? { status: 'pass', message: '已做 realpath 校验（链接逃逸会被拒绝）' }
+    : { status: 'warn', message: 'realpath 校验未挂载，junction 逃逸不检测' };
 
   return {
     profile,
@@ -195,6 +199,67 @@ export async function verifyIsolation(service: ServiceLike, profile: string): Pr
     violations,
     passed: Object.values(checks).every((check) => check.status !== 'fail'),
   };
+}
+
+/** `child` 是否等于或位于 `parent` 之内（都先 resolve）。 */
+function isInside(child: string, parent: string): boolean {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/** 最近的已存在祖先的 realpath——目标文件还不存在时也能判定它落在哪。 */
+function realpathNearestSync(target: string): string | undefined {
+  let current = resolve(target);
+  for (;;) {
+    try {
+      return realpathSync(current);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return undefined;
+      current = parent;
+    }
+  }
+}
+
+/**
+ * 给沙箱补上「链接逃逸」这一刀。
+ *
+ * 原来的 `resolveAndValidate` 只用 `path.relative` 判断是否在根内，那是纯字符串运算：
+ * 一个指向根外的 junction 会被判成「在根内」。这里在放行之后再查一次 realpath，
+ * 目标（或它最近的已存在祖先）的实际位置必须也在根的 realpath 之内。
+ *
+ * 保持同步签名——hooks 是按同步返回值判断的。
+ */
+export function hardenSandbox(service: ServiceLike): boolean {
+  const sandbox: any = service.sandbox;
+  if (!sandbox || typeof sandbox.resolveAndValidate !== 'function' || sandbox.__realpathHardened) return false;
+  const original = sandbox.resolveAndValidate.bind(sandbox);
+
+  sandbox.resolveAndValidate = (profile: string, requestedPath: string, operation: string) => {
+    const decision = original(profile, requestedPath, operation);
+    if (!decision || decision.allowed === false) return decision;
+    try {
+      const workspace = sandbox.getWorkspace?.(profile);
+      if (!workspace?.root) return decision;
+      const realRoot = realpathNearestSync(workspace.root);
+      if (!realRoot) return decision;
+      const target = isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(workspace.root, requestedPath);
+      const nearest = realpathNearestSync(target);
+      if (nearest && !isInside(nearest, realRoot)) {
+        return {
+          allowed: false,
+          action: 'deny',
+          reason: `路径经链接后跳到工作区之外：${nearest}`,
+          requiresApproval: false,
+        };
+      }
+    } catch {
+      /* fail-open：判定不了就按原结论走 */
+    }
+    return decision;
+  };
+  sandbox.__realpathHardened = true;
+  return true;
 }
 
 /**
@@ -205,6 +270,7 @@ export async function verifyIsolation(service: ServiceLike, profile: string): Pr
 export function installWorkspaces(service: ServiceLike): number {
   const list = configuredWorkspaces(service);
   const count = registerWorkspaces(service, list);
+  hardenSandbox(service);
   try {
     service.verifyIsolation = (profile: string) => verifyIsolation(service, profile);
   } catch {

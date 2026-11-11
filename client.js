@@ -264,6 +264,7 @@ window.__ModuleLoader__.load({
       const sandbox = state?.sandbox || {}
       const context = state?.context || {}
       const metrics = state?.metrics || []
+      const observed = state?.observed || {}
       const truncation = governance?.truncation || { mode: 'off', maxBytes: 4096, spill: true, perTool: {} }
       const truncStats = state?.truncation || {}
 
@@ -687,6 +688,38 @@ window.__ModuleLoader__.load({
                   'No samples yet — they only come from this plugin’s own fast-path/PTC runs.',
                 ),
               ),
+        ),
+
+        h(
+          Card,
+          { title: L('实测指标', 'Observed') },
+          h(
+            'div',
+            { className: 'rk-grid' },
+            h(Stat, { label: L('总调用', 'Calls'), value: observed.total ?? 0 }),
+            h(Stat, { label: L('被拒绝', 'Blocked'), value: observed.blocked ?? 0 }),
+            h(Stat, { label: L('需审批', 'Asked'), value: observed.asked ?? 0 }),
+            h(Stat, { label: L('脱敏命中', 'Redacted'), value: observed.redacted ?? 0 }),
+            h(Stat, { label: L('截断命中', 'Truncated'), value: observed.truncated ?? 0 }),
+            h(Stat, { label: L('回收站副本', 'Trash copies'), value: (state?.trash && state.trash.files) || 0 }),
+          ),
+          (observed.top || []).length
+            ? h(
+                'div',
+                { className: 'rk-chips' },
+                ...observed.top.map((row) =>
+                  h('span', { key: row.name, className: 'rk-chip' }, row.name + ' × ' + row.count),
+                ),
+              )
+            : null,
+          h(
+            'div',
+            { className: 'rk-sub' },
+            L(
+              '这些数字是从审计流水里数出来的（最近 200 条），不是估算；只统计经过本插件的调用。',
+              'Counted from the audit log (last 200 entries), not estimated; only calls that passed through this plugin.',
+            ),
+          ),
         ),
 
         h(
