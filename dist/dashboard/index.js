@@ -12,8 +12,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { normalizeGovernance } from '../hooks/policy.js';
+import { governanceStats } from '../hooks/index.js';
 const API_PREFIX = '/runtime-kit/api/';
-const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'profile'];
+const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'profile'];
 function governancePath(service) {
     const stateDir = service.getConfig?.()?.stateDir;
     return stateDir ? join(stateDir, 'governance.json') : undefined;
@@ -73,6 +74,7 @@ async function buildState(service) {
         context: config.context ?? {},
         loop: config.loop ?? {},
         audit,
+        truncation: governanceStats(service),
         registry: {
             tools: (service.registry?.listTools?.() ?? []).map((tool) => tool.name),
             templates: (service.registry?.listTemplates?.() ?? []).map((template) => template.name),

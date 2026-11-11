@@ -67,6 +67,7 @@ window.__ModuleLoader__.load({
 .rk-switch.on{background:color-mix(in srgb,#4c8dff 45%,transparent);border-color:transparent}
 .rk-switch::after{content:'';position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:var(--dsw-alias-label-secondary,#9a9a9a);transition:left .12s}
 .rk-switch.on::after{left:17px;background:#fff}
+.rk-num{width:110px;height:28px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));background:transparent;color:inherit;padding:0 8px;font:inherit;font-size:12px;text-align:right}
 .rk-mono{font-family:var(--dsw-font-mono,ui-monospace,Consolas,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary,#9a9a9a);word-break:break-all}
 .rk-table{width:100%;border-collapse:collapse;font-size:11.5px}
 .rk-table th{text-align:left;font-weight:500;color:var(--dsw-alias-label-secondary,#9a9a9a);padding:4px 6px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));white-space:nowrap}
@@ -149,6 +150,13 @@ window.__ModuleLoader__.load({
       return 'bad'
     }
 
+    function fmtBytes(value) {
+      const n = Number(value) || 0
+      if (n < 1024) return `${n} B`
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+      return `${(n / 1024 / 1024).toFixed(1)} MB`
+    }
+
     function stamp(iso) {
       const d = new Date(iso)
       if (Number.isNaN(d.getTime())) return String(iso || '')
@@ -212,6 +220,8 @@ window.__ModuleLoader__.load({
       const sandbox = state?.sandbox || {}
       const context = state?.context || {}
       const metrics = state?.metrics || []
+      const truncation = governance?.truncation || { mode: 'off', maxBytes: 4096, spill: true, perTool: {} }
+      const truncStats = state?.truncation || {}
 
       return h(
         'div',
@@ -367,6 +377,72 @@ window.__ModuleLoader__.load({
           { title: L('上下文治理', 'Context governance') },
           h(
             'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('返回体裁剪', 'Tool-output truncation')),
+              h(
+                'div',
+                { className: 'rk-row-d' },
+                L('平台工具返回超过预算就切掉；只记账不改写', 'Cut platform tool output over budget; shadow only measures'),
+              ),
+            ),
+            h(
+              'div',
+              { className: 'rk-seg' },
+              ...[
+                ['off', L('关', 'off')],
+                ['shadow', L('只记账', 'shadow')],
+                ['on', L('开', 'on')],
+              ].map(([value, label]) =>
+                h(
+                  'button',
+                  {
+                    key: value,
+                    className: truncation.mode === value ? 'on' : '',
+                    onClick: () => setGovernance({ ...governance, truncation: { ...truncation, mode: value } }),
+                  },
+                  label,
+                ),
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('单块预算', 'Budget per block')),
+              h('div', { className: 'rk-row-d' }, L('按字节，最小 256', 'Bytes, 256 minimum')),
+            ),
+            h('input', {
+              type: 'number',
+              className: 'rk-num',
+              min: 256,
+              step: 256,
+              value: truncation.maxBytes,
+              onChange: (e) =>
+                setGovernance({ ...governance, truncation: { ...truncation, maxBytes: Number(e.target.value) || 0 } }),
+            }),
+          ),
+          truncStats.calls
+            ? h(
+                'div',
+                { className: 'rk-sub' },
+                L(
+                  `已观测 ${truncStats.calls} 次 · 命中截断 ${truncStats.truncated} 次 · 累计省下 ${fmtBytes(
+                    truncStats.savedBytes,
+                  )} · 落盘 ${truncStats.spillFiles} 个文件`,
+                  `observed ${truncStats.calls} · truncated ${truncStats.truncated} · saved ${fmtBytes(
+                    truncStats.savedBytes,
+                  )} · spilled ${truncStats.spillFiles}`,
+                ),
+              )
+            : null,
+          h(
+            'div',
             { className: 'rk-grid' },
             h(Stat, {
               label: L('单次返回上限', 'Return cap'),
@@ -391,8 +467,8 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'rk-sub' },
             L(
-              '生效范围：只作用于本插件自己的快路径与 PTC 执行；平台的工具调用还没接入，这些上限目前不会裁剪 read / grep / pwsh 的返回。',
-              'Scope: this plugin’s own fast-path and PTC runs only. Platform tool calls are not wired yet, so these caps do not trim read / grep / pwsh output.',
+              '上排是声明值，只作用于本插件自己的快路径/PTC；平台的工具返回是否被裁剪，取决于上方「返回体裁剪」开关。',
+              'The four values above are declarations for this plugin’s own fast-path/PTC runs. Whether platform tool output gets cut is decided by the truncation switch above.',
             ),
           ),
           metrics.length

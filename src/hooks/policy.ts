@@ -6,9 +6,20 @@
 // extraction of paths/commands/URLs from arbitrary tool arguments.
 // ============================================================================
 
+export interface TruncationConfig {
+  /** off 不碰返回；shadow 只记账；on 真的截断 */
+  mode: 'off' | 'shadow' | 'on';
+  /** 单个文本块的字节预算 */
+  maxBytes: number;
+  /** 把被截掉的全文写到 <stateDir>/spill/ 下 */
+  spill: boolean;
+  /** 按工具覆盖预算，例如 { read: 16384 } */
+  perTool: Record<string, number>;
+}
+
 /** 治理开关。全部能力都受这里控制，默认只开零风险的三项。 */
 export interface GovernanceConfig {
-  /** 总开关：false 时不注册任何钩子 */
+  /** 总开关：false 时每次调用都直接放行 */
   enabled: boolean;
   /** 观察每次工具调用并写入审计流水（只读，不改变行为） */
   audit: boolean;
@@ -18,9 +29,18 @@ export interface GovernanceConfig {
   injection: 'off' | 'annotate' | 'block';
   /** 沙箱规则（文件/命令/网络/工具启停）——默认关闭，开启后会真的拒绝调用 */
   sandbox: boolean;
+  /** 返回体裁剪——默认关闭，shadow 只记账 */
+  truncation: TruncationConfig;
   /** 用哪个已注册工作区做沙箱判定 */
   profile: string;
 }
+
+export const DEFAULT_TRUNCATION: TruncationConfig = {
+  mode: 'off',
+  maxBytes: 4096,
+  spill: true,
+  perTool: {},
+};
 
 export const DEFAULT_GOVERNANCE: GovernanceConfig = {
   enabled: true,
@@ -28,8 +48,28 @@ export const DEFAULT_GOVERNANCE: GovernanceConfig = {
   redaction: true,
   injection: 'annotate',
   sandbox: false,
+  truncation: { ...DEFAULT_TRUNCATION },
   profile: 'default',
 };
+
+function normalizeTruncation(raw: unknown): TruncationConfig {
+  const input = (raw ?? {}) as Partial<TruncationConfig>;
+  const mode = input.mode === 'shadow' || input.mode === 'on' ? input.mode : 'off';
+  const maxBytes = Number(input.maxBytes);
+  const perTool: Record<string, number> = {};
+  if (input.perTool && typeof input.perTool === 'object') {
+    for (const [tool, value] of Object.entries(input.perTool)) {
+      const bytes = Number(value);
+      if (Number.isFinite(bytes) && bytes >= 256) perTool[tool] = Math.round(bytes);
+    }
+  }
+  return {
+    mode,
+    maxBytes: Number.isFinite(maxBytes) && maxBytes >= 256 ? Math.round(maxBytes) : DEFAULT_TRUNCATION.maxBytes,
+    spill: input.spill !== false,
+    perTool,
+  };
+}
 
 export function normalizeGovernance(raw: unknown): GovernanceConfig {
   const input = (raw ?? {}) as Partial<GovernanceConfig>;
@@ -43,6 +83,7 @@ export function normalizeGovernance(raw: unknown): GovernanceConfig {
     redaction: input.redaction !== false,
     injection,
     sandbox: input.sandbox === true,
+    truncation: normalizeTruncation(input.truncation),
     profile: typeof input.profile === 'string' && input.profile ? input.profile : DEFAULT_GOVERNANCE.profile,
   };
 }
@@ -223,6 +264,75 @@ export function inferFileOperation(toolName: string): 'read' | 'write' | 'delete
   if (/delete|remove|\brm\b|^rm[_-]|unlink|trash|purge/i.test(name)) return 'delete';
   if (/write|edit|create|append|move|rename|patch|apply|replace|mkdir|touch/i.test(name)) return 'write';
   return 'read';
+}
+
+/** UTF-8 字节数（预算按字节算，不引 tokenizer）。 */
+export function byteLength(text: string): number {
+  return Buffer.byteLength(text, 'utf8');
+}
+
+/** 按字符边界切到不超过 budget 字节，不产生半个汉字。 */
+export function sliceToBytes(text: string, budget: number): string {
+  if (budget <= 0) return '';
+  if (byteLength(text) <= budget) return text;
+  let bytes = 0;
+  let out = '';
+  for (const char of text) {
+    const size = byteLength(char);
+    if (bytes + size > budget) break;
+    out += char;
+    bytes += size;
+  }
+  return out;
+}
+
+export interface TruncatedBlock {
+  /** 被截断的块下标 */
+  index: number;
+  /** 原始全文，交给调用方落盘 */
+  fullText: string;
+  cutBytes: number;
+}
+
+export interface TruncateResult {
+  blocks: Array<{ type?: string; text?: string; [key: string]: unknown }>;
+  cutBytes: number;
+  touched: TruncatedBlock[];
+}
+
+/**
+ * 把超过预算的文本块切掉，并在结尾注明截了多少、全文在哪。
+ *
+ * 只动 `text` 块；图片/结构化块原样保留。返回的 `touched` 让调用方决定要不要
+ * 落盘——纯函数不碰文件系统。
+ */
+export function truncateBlocks(
+  blocks: Array<{ type?: string; text?: string; [key: string]: unknown }>,
+  budget: number,
+  marker: (cutBytes: number, fullTextPath: string | null) => string
+): TruncateResult {
+  const out: TruncateResult['blocks'] = [];
+  const touched: TruncatedBlock[] = [];
+  let cutBytes = 0;
+
+  blocks.forEach((block, index) => {
+    if (!block || typeof block !== 'object' || typeof block.text !== 'string') {
+      out.push(block);
+      return;
+    }
+    const size = byteLength(block.text);
+    if (size <= budget) {
+      out.push(block);
+      return;
+    }
+    const kept = sliceToBytes(block.text, budget);
+    const cut = size - byteLength(kept);
+    cutBytes += cut;
+    touched.push({ index, fullText: block.text, cutBytes: cut });
+    out.push({ ...block, text: kept });
+  });
+
+  return { blocks: out, cutBytes, touched };
 }
 
 /** 稳定短哈希：审计里只记参数指纹，不记原文。 */

@@ -14,14 +14,18 @@
 //   tools/pre-execute  -> { kind: 'allow' | 'deny' | 'ask' | 'cancel' }
 // ============================================================================
 
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   DEFAULT_GOVERNANCE,
+  byteLength,
   detectInjection,
   extractTargets,
   inferFileOperation,
   normalizeGovernance,
   redactSecrets,
   shortHash,
+  truncateBlocks,
   GovernanceConfig,
 } from './policy.js';
 
@@ -59,6 +63,36 @@ interface BlockLike {
 interface HookService {
   sandbox: SandboxLike;
   audit: AuditLike;
+  getConfig?(): any;
+}
+
+/** 裁剪统计：页面读它，审计也读它。 */
+export interface GovernanceStats {
+  calls: number;
+  truncated: number;
+  savedBytes: number;
+  spillFiles: number;
+  lastAt: string | null;
+}
+
+const STATS = new WeakMap<object, GovernanceStats>();
+
+export function governanceStats(service: object): GovernanceStats {
+  let stats = STATS.get(service);
+  if (!stats) {
+    stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null };
+    STATS.set(service, stats);
+  }
+  return stats;
+}
+
+function spillDirectory(service: HookService): string | undefined {
+  try {
+    const stateDir = service.getConfig?.()?.stateDir;
+    return stateDir ? join(stateDir, 'spill') : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface Inspector {
@@ -182,22 +216,24 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
     }
   });
 
-  // ---- 改写返回体：脱敏 + 注入标注 ----
+  // ---- 改写返回体：脱敏 + 注入标注 + 截断 ----
   ctx.on('tools/post-execute', async (exec: any, result: any, next: () => Promise<any>) => {
     try {
       if (!config.enabled) return next();
-      if (!config.redaction && config.injection === 'off') return next();
+      const truncation = config.truncation;
+      const wantsTruncation = Boolean(truncation) && truncation.mode !== 'off';
+      if (!config.redaction && config.injection === 'off' && !wantsTruncation) return next();
       if (result?.isError) return next(); // 失败结果不改写：accept 会把它变成成功
       const blocks: BlockLike[] = Array.isArray(result?.content) ? result.content : [];
       if (!blocks.length) return next();
 
+      const tool = String(exec?.name ?? 'unknown');
       const inspected = inspectBlocks(blocks, config);
-      if (!inspected.redacted.length && !inspected.injected.length) return next();
 
       if (config.injection === 'block' && inspected.injected.length) {
         audit(service, config, {
           profile: config.profile,
-          tool: String(exec?.name ?? 'unknown'),
+          tool,
           action: 'block',
           paramsHash: shortHash(exec?.arguments),
           result: 'BLOCKED',
@@ -209,22 +245,89 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
           feedback: [
             {
               type: 'text',
-              text: `工具 ${exec?.name ?? ''} 的返回被判为疑似提示注入（${inspected.injected.join(', ')}），已拦截。`,
+              text: `工具 ${tool} 的返回被判为疑似提示注入（${inspected.injected.join(', ')}），已拦截。`,
             },
           ],
         };
       }
 
+      // ---- 截断：shadow 只记账，on 才真的改 ----
+      const stats = governanceStats(service);
+      let content = inspected.blocks;
+      let cutBytes = 0;
+      let spilled = 0;
+
+      if (wantsTruncation) {
+        const budget = truncation.perTool?.[tool] ?? truncation.maxBytes;
+        const truncated = truncateBlocks(content, budget, () => '');
+        stats.calls += 1;
+        stats.lastAt = new Date().toISOString();
+
+        if (truncated.touched.length) {
+          cutBytes = truncated.cutBytes;
+          stats.truncated += 1;
+          stats.savedBytes += cutBytes;
+
+          if (truncation.mode === 'shadow') {
+            audit(service, config, {
+              profile: config.profile,
+              tool,
+              action: 'return',
+              paramsHash: shortHash(exec?.arguments),
+              result: 'SUCCESS',
+              durationMs: 0,
+              error: `truncate:shadow:${cutBytes}B`,
+            });
+            return next();
+          }
+
+          const dir = truncation.spill ? spillDirectory(service) : undefined;
+          const files: string[] = [];
+          if (dir) {
+            try {
+              await mkdir(dir, { recursive: true });
+            } catch {
+              /* 落盘失败就只截断，不阻断调用 */
+            }
+            for (const touch of truncated.touched) {
+              const file = join(dir, `${Date.now()}-${shortHash(`${tool}:${touch.index}`)}.txt`);
+              try {
+                await writeFile(file, touch.fullText, 'utf8');
+                files.push(file);
+                stats.spillFiles += 1;
+                spilled += 1;
+              } catch {
+                files.push('');
+              }
+            }
+          }
+
+          content = truncated.blocks.map((block, index) => {
+            const touch = truncated.touched.find((item) => item.index === index);
+            if (!touch || typeof block.text !== 'string') return block;
+            const file = files[truncated.touched.indexOf(touch)] || null;
+            const note = file
+              ? `\n…[runtime-kit] truncated ${touch.cutBytes} bytes; full text: ${file}`
+              : `\n…[runtime-kit] truncated ${touch.cutBytes} bytes`;
+            return { ...block, text: block.text + note };
+          });
+        }
+      }
+
+      const changed = inspected.redacted.length > 0 || inspected.injected.length > 0 || cutBytes > 0;
+      if (!changed) return next();
+
       audit(service, config, {
         profile: config.profile,
-        tool: String(exec?.name ?? 'unknown'),
+        tool,
         action: 'return',
         paramsHash: shortHash(exec?.arguments),
         result: 'SUCCESS',
         durationMs: 0,
         ...(inspected.redacted.length ? { error: `redacted:${inspected.redacted.join(',')}` } : {}),
+        ...(cutBytes ? { error: `truncated:${cutBytes}B${spilled ? `:${spilled}files` : ''}` } : {}),
       });
-      return { kind: 'accept', content: inspected.blocks };
+      return { kind: 'accept', content };
     } catch {
       return next();
     }

@@ -5,14 +5,40 @@
 // unit-tested without a Host: secret redaction, injection detection, and the
 // extraction of paths/commands/URLs from arbitrary tool arguments.
 // ============================================================================
+export const DEFAULT_TRUNCATION = {
+    mode: 'off',
+    maxBytes: 4096,
+    spill: true,
+    perTool: {},
+};
 export const DEFAULT_GOVERNANCE = {
     enabled: true,
     audit: true,
     redaction: true,
     injection: 'annotate',
     sandbox: false,
+    truncation: { ...DEFAULT_TRUNCATION },
     profile: 'default',
 };
+function normalizeTruncation(raw) {
+    const input = (raw ?? {});
+    const mode = input.mode === 'shadow' || input.mode === 'on' ? input.mode : 'off';
+    const maxBytes = Number(input.maxBytes);
+    const perTool = {};
+    if (input.perTool && typeof input.perTool === 'object') {
+        for (const [tool, value] of Object.entries(input.perTool)) {
+            const bytes = Number(value);
+            if (Number.isFinite(bytes) && bytes >= 256)
+                perTool[tool] = Math.round(bytes);
+        }
+    }
+    return {
+        mode,
+        maxBytes: Number.isFinite(maxBytes) && maxBytes >= 256 ? Math.round(maxBytes) : DEFAULT_TRUNCATION.maxBytes,
+        spill: input.spill !== false,
+        perTool,
+    };
+}
 export function normalizeGovernance(raw) {
     const input = (raw ?? {});
     const injection = input.injection === 'off' || input.injection === 'block' || input.injection === 'annotate'
@@ -24,6 +50,7 @@ export function normalizeGovernance(raw) {
         redaction: input.redaction !== false,
         injection,
         sandbox: input.sandbox === true,
+        truncation: normalizeTruncation(input.truncation),
         profile: typeof input.profile === 'string' && input.profile ? input.profile : DEFAULT_GOVERNANCE.profile,
     };
 }
@@ -175,6 +202,55 @@ export function inferFileOperation(toolName) {
     if (/write|edit|create|append|move|rename|patch|apply|replace|mkdir|touch/i.test(name))
         return 'write';
     return 'read';
+}
+/** UTF-8 字节数（预算按字节算，不引 tokenizer）。 */
+export function byteLength(text) {
+    return Buffer.byteLength(text, 'utf8');
+}
+/** 按字符边界切到不超过 budget 字节，不产生半个汉字。 */
+export function sliceToBytes(text, budget) {
+    if (budget <= 0)
+        return '';
+    if (byteLength(text) <= budget)
+        return text;
+    let bytes = 0;
+    let out = '';
+    for (const char of text) {
+        const size = byteLength(char);
+        if (bytes + size > budget)
+            break;
+        out += char;
+        bytes += size;
+    }
+    return out;
+}
+/**
+ * 把超过预算的文本块切掉，并在结尾注明截了多少、全文在哪。
+ *
+ * 只动 `text` 块；图片/结构化块原样保留。返回的 `touched` 让调用方决定要不要
+ * 落盘——纯函数不碰文件系统。
+ */
+export function truncateBlocks(blocks, budget, marker) {
+    const out = [];
+    const touched = [];
+    let cutBytes = 0;
+    blocks.forEach((block, index) => {
+        if (!block || typeof block !== 'object' || typeof block.text !== 'string') {
+            out.push(block);
+            return;
+        }
+        const size = byteLength(block.text);
+        if (size <= budget) {
+            out.push(block);
+            return;
+        }
+        const kept = sliceToBytes(block.text, budget);
+        const cut = size - byteLength(kept);
+        cutBytes += cut;
+        touched.push({ index, fullText: block.text, cutBytes: cut });
+        out.push({ ...block, text: kept });
+    });
+    return { blocks: out, cutBytes, touched };
 }
 /** 稳定短哈希：审计里只记参数指纹，不记原文。 */
 export function shortHash(value) {

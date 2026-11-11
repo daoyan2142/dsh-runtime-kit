@@ -35,7 +35,8 @@ const client = captured.factory((name) => {
 
 const state = {
   health: { status: 'healthy', version: '0.3.1', dshVersion: '0.1.0', checks: {} },
-  governance: { enabled: true, audit: true, redaction: true, injection: 'annotate', sandbox: false, profile: 'default' },
+  governance: { enabled: true, audit: true, redaction: true, injection: 'annotate', sandbox: false, profile: 'default', truncation: { mode: 'shadow', maxBytes: 4096, spill: true, perTool: {} } },
+  truncation: { calls: 37, truncated: 9, savedBytes: 184320, spillFiles: 9, lastAt: '2026-11-11T03:02:00.000Z' },
   sandbox: { mode: 'workspace-write', approval: 'ask', networkDefault: 'deny', files: 3, commands: 2, network: 1, toolControl: 4, injectionGuard: true, sensitiveProtection: true },
   context: { maxReturnBytes: 4096, fieldsProjection: true, prunerEnabled: true, compactionEnabled: true, lazyLoadTools: true },
   loop: { preset: 'code' },

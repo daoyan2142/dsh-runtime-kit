@@ -10,8 +10,14 @@ import {
   extractTargets,
   inferFileOperation,
   normalizeGovernance,
+  byteLength,
+  sliceToBytes,
+  truncateBlocks,
 } from '../dist/hooks/policy.js';
-import { inspectBlocks, evaluateCall, installGovernance } from '../dist/hooks/index.js';
+import { inspectBlocks, evaluateCall, installGovernance, governanceStats } from '../dist/hooks/index.js';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as fsp from 'node:fs/promises';
 
 let pass = 0;
 let fail = 0;
@@ -159,6 +165,57 @@ const sandboxCtx = makeCtx();
 installGovernance(sandboxCtx, { sandbox: denySandbox, audit: noopAudit }, { sandbox: true });
 const denied = await sandboxCtx.handlers.get('tools/pre-execute')({ name: 'write', arguments: { path: '../../x' } }, async () => nextValue);
 check('sandbox 打开后拒绝调用', denied.kind === 'deny' && String(denied.reason).includes('runtime-kit'));
+
+
+console.log('\n[7] 返回体裁剪');
+const big = 'x'.repeat(5000);
+const small = 'ok';
+const cut = truncateBlocks([{ type: 'text', text: big }, { type: 'text', text: small }], 1000, () => '');
+check('超预算块被切到预算内', byteLength(cut.blocks[0].text) <= 1000, String(byteLength(cut.blocks[0].text)));
+check('未超预算块原样保留', cut.blocks[1].text === small);
+check('记录了被截断的块', cut.touched.length === 1 && cut.touched[0].cutBytes > 3000);
+
+const zh = '汉字'.repeat(500);
+const zhCut = sliceToBytes(zh, 100);
+check('按字符切，不产生半个汉字', Buffer.from(zhCut, 'utf8').toString('utf8') === zhCut && byteLength(zhCut) <= 100);
+
+console.log('\n[8] 截断开关：off / shadow / on');
+const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rk-spill-'));
+const truncSvc = { sandbox: allowSandbox, audit: noopAudit, getConfig: () => ({ stateDir }) };
+const longText = { type: 'text', text: 'A'.repeat(5000) };
+
+const offCtx2 = makeCtx();
+installGovernance(offCtx2, truncSvc, { truncation: { mode: 'off', maxBytes: 512 } });
+const offOut = await offCtx2.handlers.get('tools/post-execute')({ name: 'read', arguments: {} }, { isError: false, content: [longText] }, async () => ({ kind: 'accept', marker: 'off' }));
+check('mode=off 时原样放行', offOut.marker === 'off');
+
+const shadowCtx = makeCtx();
+installGovernance(shadowCtx, truncSvc, { truncation: { mode: 'shadow', maxBytes: 512 } });
+const shadowOut = await shadowCtx.handlers.get('tools/post-execute')({ name: 'read', arguments: {} }, { isError: false, content: [longText] }, async () => ({ kind: 'accept', marker: 'shadow' }));
+check('mode=shadow 时不改写返回', shadowOut.marker === 'shadow');
+check('shadow 记了一笔统计', governanceStats(truncSvc).truncated >= 1 && governanceStats(truncSvc).savedBytes > 4000);
+
+const onCtx = makeCtx();
+installGovernance(onCtx, truncSvc, { truncation: { mode: 'on', maxBytes: 512, spill: true } });
+const onOut = await onCtx.handlers.get('tools/post-execute')({ name: 'read', arguments: {} }, { isError: false, content: [longText] }, async () => ({ kind: 'accept', marker: 'on' }));
+check('mode=on 返回改写后的内容', onOut.kind === 'accept' && Array.isArray(onOut.content));
+check('改写后带截断标注', String(onOut.content[0].text).includes('truncated'));
+check('改写后体积降到预算附近', byteLength(onOut.content[0].text) <= 900, String(byteLength(onOut.content[0].text)));
+const spillDir = path.join(stateDir, 'spill');
+const spilled = await fsp.readdir(spillDir).catch(() => []);
+check('全文落到 spill 目录', spilled.length >= 1, String(spilled.length));
+if (spilled.length) {
+  const full = await fsp.readFile(path.join(spillDir, spilled[0]), 'utf8');
+  check('落盘的是完整原文', full.length === 5000, String(full.length));
+}
+await fsp.rm(stateDir, { recursive: true, force: true });
+
+console.log('\n[9] 配置归一化');
+const govDefault = normalizeGovernance({});
+check('默认 truncation 是 off', govDefault.truncation.mode === 'off' && govDefault.truncation.maxBytes === 4096);
+const govOn = normalizeGovernance({ truncation: { mode: 'on', maxBytes: 8192, perTool: { read: 16384 } } });
+check('perTool 被保留', govOn.truncation.perTool.read === 16384);
+check('非法预算回落到默认', normalizeGovernance({ truncation: { mode: 'on', maxBytes: 10 } }).truncation.maxBytes === 4096);
 
 console.log(`\n========== 结果: ${pass} 通过, ${fail} 失败 ==========`);
 if (fail > 0) process.exit(1);

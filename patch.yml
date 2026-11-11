@@ -36,6 +36,11 @@
           shell: pwsh
           workspaceTrust: false
           toolControl: {}
+        truncation:
+          mode: off
+          maxBytes: 4096
+          spill: true
+          perTool: {}
         audit:
           mode: append-only
           desensitize: true

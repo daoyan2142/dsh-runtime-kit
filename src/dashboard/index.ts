@@ -13,9 +13,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { normalizeGovernance } from '../hooks/policy.js';
+import { governanceStats } from '../hooks/index.js';
 
 const API_PREFIX = '/runtime-kit/api/';
-const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'profile'] as const;
+const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'profile'] as const;
 
 interface DashboardService {
   getConfig(): any;
@@ -97,6 +98,7 @@ async function buildState(service: DashboardService) {
     context: config.context ?? {},
     loop: config.loop ?? {},
     audit,
+    truncation: governanceStats(service),
     registry: {
       tools: (service.registry?.listTools?.() ?? []).map((tool: any) => tool.name),
       templates: (service.registry?.listTemplates?.() ?? []).map((template: any) => template.name),
