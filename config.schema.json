@@ -122,6 +122,28 @@
           },
           "additionalProperties": false
         },
+        "workspaces": {
+          "type": "array",
+          "maxItems": 3,
+          "description": "沙箱工作区：profile 与 governance.profile 对应，root 是允许读写的根",
+          "items": {
+            "type": "object",
+            "properties": {
+              "profile": { "type": "string" },
+              "root": { "type": "string" },
+              "permissionMode": { "type": "string", "enum": ["read-only", "workspace-write", "danger-full-access"] },
+              "networkAllowlist": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["profile", "root"],
+            "additionalProperties": false
+          }
+        },
+        "commandDefault": {
+          "type": "string",
+          "enum": ["allow", "ask", "deny"],
+          "default": "allow",
+          "description": "未命中命令规则时的默认策略；默认放行，规则里显式拦危险前缀"
+        },
         "networkDefault": {
           "type": "string",
           "enum": ["allow", "ask", "deny"],

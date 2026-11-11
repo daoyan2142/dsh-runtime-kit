@@ -67,6 +67,7 @@ window.__ModuleLoader__.load({
 .rk-switch.on{background:color-mix(in srgb,#4c8dff 45%,transparent);border-color:transparent}
 .rk-switch::after{content:'';position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:var(--dsw-alias-label-secondary,#9a9a9a);transition:left .12s}
 .rk-switch.on::after{left:17px;background:#fff}
+.rk-input{height:28px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));background:transparent;color:inherit;padding:0 8px;font:inherit;font-size:12px;min-width:0}
 .rk-num{width:110px;height:28px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));background:transparent;color:inherit;padding:0 8px;font:inherit;font-size:12px;text-align:right}
 .rk-mono{font-family:var(--dsw-font-mono,ui-monospace,Consolas,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary,#9a9a9a);word-break:break-all}
 .rk-table{width:100%;border-collapse:collapse;font-size:11.5px}
@@ -172,6 +173,10 @@ window.__ModuleLoader__.load({
       // that only fetches would always screenshot as "loading".
       const [state, setState] = useState(initial || null)
       const [governance, setGovernance] = useState(initial?.governance || null)
+      const [draft, setDraft] = useState(
+        initial ? { workspaces: initial.sandbox?.workspaces || [], commandDefault: initial.sandbox?.commandDefault || 'allow', networkDefault: initial.sandbox?.networkDefault || 'deny' } : null,
+      )
+      const [wsNew, setWsNew] = useState({ profile: 'default', root: '', mode: 'workspace-write' })
       const [busy, setBusy] = useState('')
       const [note, setNote] = useState('')
       const [error, setError] = useState('')
@@ -183,6 +188,11 @@ window.__ModuleLoader__.load({
           const value = await call('state')
           setState(value)
           setGovernance(value.governance)
+          setDraft({
+            workspaces: value.sandbox?.workspaces || [],
+            commandDefault: value.sandbox?.commandDefault || 'allow',
+            networkDefault: value.sandbox?.networkDefault || 'deny',
+          })
         } catch (e) {
           setError(String(e.message || e))
         } finally {
@@ -213,6 +223,40 @@ window.__ModuleLoader__.load({
       const dirty = Boolean(
         state && governance && JSON.stringify(state.governance) !== JSON.stringify(governance),
       )
+
+      const sandboxDirty = Boolean(
+        draft &&
+          state &&
+          JSON.stringify({
+            workspaces: draft.workspaces,
+            commandDefault: draft.commandDefault,
+            networkDefault: draft.networkDefault,
+          }) !==
+            JSON.stringify({
+              workspaces: state.sandbox?.workspaces || [],
+              commandDefault: state.sandbox?.commandDefault || 'allow',
+              networkDefault: state.sandbox?.networkDefault || 'deny',
+            }),
+      )
+
+      const saveSandbox = async () => {
+        setBusy('sandbox')
+        setNote('')
+        setError('')
+        try {
+          await call('sandbox', {
+            workspaces: draft.workspaces,
+            commandDefault: draft.commandDefault,
+            networkDefault: draft.networkDefault,
+          })
+          setNote(L('沙箱配置已保存。', 'Sandbox configuration saved.'))
+          await load()
+        } catch (e) {
+          setError(String(e.message || e))
+        } finally {
+          setBusy('')
+        }
+      }
 
       const health = state?.health || {}
       const audit = state?.audit || []
@@ -338,7 +382,19 @@ window.__ModuleLoader__.load({
                   ),
                   on: governance.sandbox,
                   disabled: Boolean(busy),
-                  onChange: (on) => setGovernance({ ...governance, sandbox: on }),
+                  onChange: (on) => {
+                    const hasWorkspace = (state?.sandbox?.workspaces || []).length > 0
+                    if (on && !hasWorkspace) {
+                      setNote(
+                        L(
+                          '先配置工作区再打开沙箱，否则所有带路径的调用都会被拒绝。',
+                          'Configure a workspace first — otherwise every path-bearing call is denied.',
+                        ),
+                      )
+                      return
+                    }
+                    setGovernance({ ...governance, sandbox: on })
+                  },
                 }),
                 note ? h('div', { className: 'rk-sub' }, note) : null,
               ]
@@ -347,31 +403,141 @@ window.__ModuleLoader__.load({
 
         h(
           Card,
-          { title: L('沙箱规则', 'Sandbox rules') },
+          {
+            title: L('沙箱与工作区', 'Sandbox and workspaces'),
+            right: h(
+              'button',
+              { className: 'rk-btn primary', onClick: saveSandbox, disabled: !sandboxDirty || Boolean(busy) },
+              L('保存', 'Save'),
+            ),
+          },
           h(
             'div',
-            { className: 'rk-grid' },
-            h(Stat, { label: L('基线', 'Mode'), value: sandbox.mode || '—' }),
-            h(Stat, { label: L('审批', 'Approval'), value: sandbox.approval || '—' }),
-            h(Stat, { label: L('网络默认', 'Network default'), value: sandbox.networkDefault || '—' }),
-            h(Stat, {
-              label: L('规则数（文件/命令/网络）', 'Rules (file/cmd/net)'),
-              value: `${sandbox.files ?? 0}/${sandbox.commands ?? 0}/${sandbox.network ?? 0}`,
+            { className: 'rk-sub' },
+            L(
+              '工作区是路径判定的边界：没有工作区时沙箱开关会被拒绝打开。命令默认“允许”，危险前缀在规则里显式拦。',
+              'A workspace is the boundary for every path decision. Without one the sandbox switch refuses to turn on. Commands default to allow; dangerous prefixes are denied by rule.',
+            ),
+          ),
+          (draft?.workspaces || []).length
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column' } },
+                ...(draft.workspaces || []).map((ws, index) =>
+                  h(
+                    'div',
+                    { key: ws.profile, className: 'rk-row' },
+                    h(
+                      'div',
+                      { className: 'rk-row-main' },
+                      h('div', { className: 'rk-row-t' }, ws.profile),
+                      h('div', { className: 'rk-row-d' }, ws.root + ' · ' + (ws.mode || 'workspace-write')),
+                    ),
+                    h(
+                      'button',
+                      {
+                        className: 'rk-btn',
+                        onClick: () =>
+                          setDraft({ ...draft, workspaces: (draft.workspaces || []).filter((_, i) => i !== index) }),
+                      },
+                      '×',
+                    ),
+                  ),
+                ),
+              )
+            : h('div', { className: 'rk-empty' }, L('还没有工作区。', 'No workspace yet.')),
+          h(
+            'div',
+            { className: 'rk-row' },
+            h('input', {
+              className: 'rk-input',
+              style: { flex: '0 1 110px' },
+              value: wsNew.profile,
+              placeholder: L('profile', 'profile'),
+              onChange: (e) => setWsNew({ ...wsNew, profile: e.target.value }),
             }),
+            h('input', {
+              className: 'rk-input',
+              style: { flex: '1 1 180px' },
+              value: wsNew.root,
+              placeholder: 'D:\\work',
+              onChange: (e) => setWsNew({ ...wsNew, root: e.target.value }),
+            }),
+            h(
+              'button',
+              {
+                className: 'rk-btn',
+                disabled: !wsNew.profile.trim() || !wsNew.root.trim(),
+                onClick: () => {
+                  setDraft({
+                    ...draft,
+                    workspaces: [
+                      ...(draft?.workspaces || []),
+                      { profile: wsNew.profile.trim(), root: wsNew.root.trim(), mode: wsNew.mode },
+                    ],
+                  })
+                  setWsNew({ ...wsNew, root: '' })
+                },
+              },
+              L('添加', 'Add'),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('命令默认策略', 'Command default')),
+              h('div', { className: 'rk-row-d' }, L('未命中规则时怎么办', 'What happens when no rule matches')),
+            ),
+            h(
+              'div',
+              { className: 'rk-seg' },
+              ...[['allow', L('允许', 'allow')], ['ask', L('询问', 'ask')], ['deny', L('拒绝', 'deny')]].map(([value, label]) =>
+                h(
+                  'button',
+                  {
+                    key: value,
+                    className: (draft?.commandDefault || 'allow') === value ? 'on' : '',
+                    onClick: () => setDraft({ ...draft, commandDefault: value }),
+                  },
+                  label,
+                ),
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('网络默认策略', 'Network default')),
+              h('div', { className: 'rk-row-d' }, L('域名命中白名单/黑名单之外的默认行为', 'Behaviour for domains without a rule')),
+            ),
+            h(
+              'div',
+              { className: 'rk-seg' },
+              ...[['allow', L('允许', 'allow')], ['ask', L('询问', 'ask')], ['deny', L('拒绝', 'deny')]].map(([value, label]) =>
+                h(
+                  'button',
+                  {
+                    key: value,
+                    className: (draft?.networkDefault || 'deny') === value ? 'on' : '',
+                    onClick: () => setDraft({ ...draft, networkDefault: value }),
+                  },
+                  label,
+                ),
+              ),
+            ),
           ),
           h(
             'div',
             { className: 'rk-sub' },
-            `${L('注入防护', 'Injection guard')}: ${sandbox.injectionGuard ? L('开', 'on') : L('关', 'off')} · ${L(
-              '敏感保护',
-              'Sensitive protection',
-            )}: ${sandbox.sensitiveProtection ? L('开', 'on') : L('关', 'off')} · ${L(
-              '工具粒度管控',
-              'Tool control',
-            )}: ${sandbox.toolControl ?? 0}`,
+            L('基线', 'Mode') + ': ' + (sandbox.mode || '—') + ' · ' + L('审批', 'Approval') + ': ' + (sandbox.approval || '—') + ' · ' + L('规则数（文件/命令/网络）', 'Rules (file/cmd/net)') + ': ' + (sandbox.files || 0) + '/' + (sandbox.commands || 0) + '/' + (sandbox.network || 0),
           ),
         ),
-
         h(
           Card,
           { title: L('上下文治理', 'Context governance') },

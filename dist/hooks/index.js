@@ -14,8 +14,9 @@
 //   tools/pre-execute  -> { kind: 'allow' | 'deny' | 'ask' | 'cancel' }
 // ============================================================================
 import { mkdir, writeFile } from 'node:fs/promises';
+import { installWorkspaces } from '../workspaces/index.js';
 import { join } from 'node:path';
-import { DEFAULT_GOVERNANCE, detectInjection, extractTargets, inferFileOperation, normalizeGovernance, redactSecrets, shortHash, truncateBlocks, } from './policy.js';
+import { DEFAULT_GOVERNANCE, detectInjection, extractTargets, inferFileOperation, normalizeGovernance, decideCommand, redactSecrets, shortHash, truncateBlocks, } from './policy.js';
 export { DEFAULT_GOVERNANCE, normalizeGovernance };
 const STATS = new WeakMap();
 export function governanceStats(service) {
@@ -71,13 +72,15 @@ export function inspectBlocks(blocks, config) {
     return { blocks: out, redacted: [...redacted], injected: [...injected] };
 }
 /** 沙箱判定：先看工具开关，再看文件/命令/网络。返回第一个非 allow 的结论。 */
-export function evaluateCall(exec, sandbox, config) {
+export function evaluateCall(exec, sandbox, config, sandboxConfig) {
     const tool = String(exec?.name ?? '');
     const allowed = sandbox.isToolAllowed(tool);
     if (!allowed.allowed)
         return { action: allowed.action, reason: allowed.reason, rule: 'tool' };
     const targets = extractTargets(exec?.arguments);
     const operation = inferFileOperation(tool);
+    const commandRules = Array.isArray(sandboxConfig?.rules?.commands) ? sandboxConfig.rules.commands : [];
+    const commandDefault = sandboxConfig?.commandDefault === 'deny' || sandboxConfig?.commandDefault === 'ask' ? sandboxConfig.commandDefault : 'allow';
     for (const target of targets.paths) {
         const decision = sandbox.resolveAndValidate(config.profile, target, operation);
         if (decision && !decision.allowed) {
@@ -85,9 +88,9 @@ export function evaluateCall(exec, sandbox, config) {
         }
     }
     for (const command of targets.commands) {
-        const decision = sandbox.validateCommand({ command, args: [] });
-        if (!decision.allowed) {
-            return { action: decision.action, reason: decision.reason, rule: 'command' };
+        const verdict = decideCommand(command, commandRules, commandDefault);
+        if (verdict.action !== 'allow') {
+            return { action: verdict.action, reason: verdict.reason, rule: 'command' };
         }
     }
     for (const url of targets.urls) {
@@ -117,6 +120,13 @@ function audit(service, config, entry) {
  */
 export function installGovernance(ctx, service, raw) {
     const config = normalizeGovernance(raw);
+    // 工作区必须在这里注册：apply 一定会走到 installGovernance，而页面不一定存在。
+    try {
+        installWorkspaces(service);
+    }
+    catch {
+        /* 注册失败不影响钩子 */
+    }
     // Hooks stay registered even when disabled: every listener re-reads the flag,
     // so the dashboard can turn governance on and off without a restart.
     if (typeof ctx?.on !== 'function')
@@ -259,7 +269,7 @@ export function installGovernance(ctx, service, raw) {
         try {
             if (!config.enabled || !config.sandbox)
                 return next();
-            const verdict = evaluateCall(exec, service.sandbox, config);
+            const verdict = evaluateCall(exec, service.sandbox, config, service.getConfig?.()?.sandbox);
             if (verdict.action === 'allow')
                 return next();
             audit(service, config, {

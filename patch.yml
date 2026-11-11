@@ -23,6 +23,8 @@
           enableCustomLoop: false
         sandbox:
           mode: workspace-write
+          workspaces: []
+          commandDefault: allow
           approval: ask
           rules:
             files: []

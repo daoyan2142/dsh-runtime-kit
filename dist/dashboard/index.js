@@ -13,6 +13,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { normalizeGovernance } from '../hooks/policy.js';
 import { governanceStats } from '../hooks/index.js';
+import { normalizeWorkspaces, registerWorkspaces, verifyIsolation } from '../workspaces/index.js';
 const API_PREFIX = '/runtime-kit/api/';
 const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'profile'];
 function governancePath(service) {
@@ -30,6 +31,41 @@ async function loadSavedGovernance(service) {
     catch {
         /* first run, or a hand-edited file: keep the startup config */
     }
+}
+async function saveSandbox(service, payload) {
+    const file = sandboxPath(service);
+    if (!file)
+        return;
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+async function loadSavedSandbox(service) {
+    const file = sandboxPath(service);
+    if (!file)
+        return;
+    try {
+        const raw = JSON.parse(await readFile(file, 'utf8'));
+        const { workspaces } = normalizeWorkspaces(raw.workspaces);
+        if (!workspaces.length)
+            return;
+        const current = service.getConfig?.() ?? {};
+        service.reloadConfig?.({
+            sandbox: {
+                ...(current.sandbox ?? {}),
+                workspaces,
+                ...(raw.commandDefault ? { commandDefault: raw.commandDefault } : {}),
+                ...(raw.networkDefault ? { networkDefault: raw.networkDefault } : {}),
+            },
+        });
+        registerWorkspaces(service, workspaces);
+    }
+    catch {
+        /* 文件不存在或坏了：按配置里的来 */
+    }
+}
+function sandboxPath(service) {
+    const stateDir = service.getConfig?.()?.stateDir;
+    return stateDir ? join(stateDir, 'sandbox.json') : undefined;
 }
 async function saveGovernance(service, governance) {
     const file = governancePath(service);
@@ -49,10 +85,17 @@ function pickGovernance(input) {
 function sandboxSummary(config) {
     const sandbox = config?.sandbox ?? {};
     const rules = sandbox.rules ?? {};
+    const workspaces = normalizeWorkspaces(sandbox.workspaces).workspaces;
     return {
         mode: sandbox.mode,
         approval: sandbox.approval,
+        commandDefault: sandbox.commandDefault ?? 'allow',
         networkDefault: sandbox.networkDefault,
+        workspaces: workspaces.map((ws) => ({
+            profile: ws.profile,
+            root: ws.root,
+            mode: ws.permissionMode ?? sandbox.mode ?? 'workspace-write',
+        })),
         files: (rules.files ?? []).length,
         commands: (rules.commands ?? []).length,
         network: (rules.network ?? []).length,
@@ -67,8 +110,10 @@ async function buildState(service) {
         service.healthCheck().catch((error) => ({ status: 'unhealthy', error: String(error?.message ?? error) })),
         service.getAuditLogs({ limit: 20 }).catch(() => []),
     ]);
+    const isolation = await verifyIsolation(service, normalizeGovernance(service.governance ?? config.governance).profile).catch(() => null);
     return {
         health,
+        isolation,
         governance: normalizeGovernance(service.governance ?? config.governance),
         sandbox: sandboxSummary(config),
         context: config.context ?? {},
@@ -108,6 +153,24 @@ async function handle(service, method, body) {
             Object.assign(service.governance ?? {}, merged);
             await saveGovernance(service, merged);
             return { governance: merged };
+        }
+        case 'sandbox': {
+            const current = service.getConfig?.() ?? {};
+            const { workspaces, errors } = normalizeWorkspaces(body?.workspaces);
+            if (errors.length)
+                throw new Error(errors.join('；'));
+            const commandDefault = ['allow', 'ask', 'deny'].includes(body?.commandDefault) ? body.commandDefault : 'allow';
+            const networkDefault = ['allow', 'ask', 'deny'].includes(body?.networkDefault) ? body.networkDefault : 'deny';
+            const sandbox = {
+                ...(current.sandbox ?? {}),
+                workspaces,
+                commandDefault,
+                networkDefault,
+            };
+            service.reloadConfig?.({ sandbox });
+            registerWorkspaces(service, workspaces);
+            await saveSandbox(service, { workspaces, commandDefault, networkDefault });
+            return { sandbox: sandboxSummary(service.getConfig?.() ?? {}) };
         }
         default:
             return null;
@@ -172,6 +235,7 @@ export function mountDashboard(ctx, service) {
         }
     })();
     void loadSavedGovernance(service).catch(() => { });
+    void loadSavedSandbox(service).catch(() => { });
     const listener = async (req, res) => {
         try {
             if (connection?.requestRejection) {

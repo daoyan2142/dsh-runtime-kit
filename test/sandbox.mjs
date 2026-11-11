@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 沙箱端到端：用真实的插件代码（apply + 钩子 + Sandbox）验证拦截能力。
  *
  * 为什么不在运行中的 DSH 里直接开沙箱：`sandbox` 一旦打开，同一条管线也会拦当前会话
@@ -76,14 +76,15 @@ await mod.apply(ctx, {
       ],
     },
     networkDefault: 'deny',
+    commandDefault: 'allow',
+    workspaces: [{ profile: 'default', root: wsRoot, permissionMode: 'workspace-write' }],
     toolControl: { crash_tool: false },
   },
 });
 
 const svc = ctx.__runtimeKit;
-svc.registry.registerWorkspace({ profile: 'default', root: wsRoot, permissionMode: 'workspace-write' });
-svc.sandbox.registerWorkspace({ profile: 'default', root: wsRoot, permissionMode: 'workspace-write' });
 check('服务与钩子就绪', Boolean(svc) && typeof handlers['tools/pre-execute'] === 'function');
+check('配置里的工作区已自动注册', Boolean(svc.sandbox.getWorkspace?.('default')), JSON.stringify(svc.getConfig().sandbox.workspaces));
 
 // 打开沙箱：钩子读的是同一个 governance 对象，改它即刻生效
 svc.governance.sandbox = true;
@@ -145,6 +146,40 @@ svc.governance.sandbox = false;
 const off = await pre('read', { path: path.join(wsRoot, 'secrets', 'key.txt') });
 check('sandbox=false 时原样放行', off === allowed);
 
+
+console.log('\n[7] 工作区配置校验');
+const { normalizeWorkspaces } = await import(new URL('../dist/workspaces/index.js', import.meta.url).href);
+const bad = normalizeWorkspaces([
+  { profile: 'ok', root: 'D:\\work' },
+  { profile: 'ok', root: 'D:\\other' },
+  { profile: 'rel', root: 'relative/path' },
+]);
+check('合法项保留', bad.workspaces.length === 1 && bad.workspaces[0].profile === 'ok');
+check('相对路径被拒', bad.errors.some((e) => e.includes('绝对路径')));
+check('盘符根/相对路径都被报告', bad.errors.length >= 2);
+check('重复 profile 被拒', bad.errors.some((e) => e.includes('重复')));
+
+console.log('\n[8] 隔离自检');
+svc.governance.sandbox = true;
+const report = await svc.verifyIsolation('default');
+check('已配置的工作区通过', report.passed === true, JSON.stringify(report.violations));
+check('越界探针被拒绝', report.checks.traversal.status === 'pass', report.checks.traversal.message);
+check('如实标注 symlink 未实现', report.checks.symlink.status === 'warn');
+const missing = await svc.verifyIsolation('nope');
+check('未配置的 profile 判定失败', missing.passed === false && missing.checks.workspace.status === 'fail');
+
+console.log('\n[9] commandDefault');
+const sandboxCfg = svc.getConfig().sandbox;
+svc.reloadConfig({
+  sandbox: { ...sandboxCfg, commandDefault: 'deny', rules: { ...sandboxCfg.rules, commands: [] } },
+});
+const deniedByDefault = await pre('pwsh', { command: 'git status' });
+check('commandDefault=deny 时未命中规则也拒绝', deniedByDefault.kind === 'deny', JSON.stringify(deniedByDefault).slice(0, 100));
+svc.reloadConfig({ sandbox: { ...sandboxCfg, commandDefault: 'allow' } });
+const allowedByDefault = await pre('pwsh', { command: 'git status' });
+check('commandDefault=allow 时放行', allowedByDefault === allowed || allowedByDefault.kind === 'allow');
+
 console.log(`\n========== 结果: ${pass} 通过, ${fail} 失败 ==========`);
 await fs.rm(tmp, { recursive: true, force: true });
 if (fail > 0) process.exit(1);
+

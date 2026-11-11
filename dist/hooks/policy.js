@@ -252,6 +252,32 @@ export function truncateBlocks(blocks, budget, marker) {
     });
     return { blocks: out, cutBytes, touched };
 }
+/**
+ * 命令判定：**默认放行，规则显式拦截**。
+ *
+ * 为什么不是白名单：`workspace-write` 模式原来把"不在白名单里的命令"全拒，
+ * 而 PowerShell 的命令空间是开放的（`Get-ChildItem`、`git status`、`node -e ...`），
+ * 白名单永远列不全，结果就是沙箱一开 pwsh 全废。命令这条线改成黑名单语义，
+ * 路径和网络仍然可以 fail-closed。
+ */
+export function decideCommand(command, rules = [], fallback = 'allow') {
+    const value = String(command ?? '').trim().toLowerCase();
+    if (!value)
+        return { action: fallback, reason: 'empty command', };
+    for (const rule of rules) {
+        const prefix = String(rule?.prefix ?? '').trim().toLowerCase();
+        if (!prefix)
+            continue;
+        if (value === prefix || value.startsWith(prefix) || value.startsWith(`${prefix} `)) {
+            return {
+                action: rule.action ?? fallback,
+                reason: `命令规则 ${rule.action}: ${rule.prefix}`,
+                matched: rule.prefix,
+            };
+        }
+    }
+    return { action: fallback, reason: `命令默认策略: ${fallback}` };
+}
 /** 稳定短哈希：审计里只记参数指纹，不记原文。 */
 export function shortHash(value) {
     // 延迟引入，避免把 crypto 拖进纯函数模块的静态依赖图

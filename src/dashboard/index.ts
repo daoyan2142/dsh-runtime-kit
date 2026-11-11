@@ -14,12 +14,15 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { normalizeGovernance } from '../hooks/policy.js';
 import { governanceStats } from '../hooks/index.js';
+import { normalizeWorkspaces, registerWorkspaces, verifyIsolation } from '../workspaces/index.js';
 
 const API_PREFIX = '/runtime-kit/api/';
 const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'profile'] as const;
 
 interface DashboardService {
   getConfig(): any;
+  reloadConfig?(partial: any): void;
+  sandbox: any;
   getMetrics(): any[];
   getAuditLogs(filter?: any): Promise<any[]>;
   healthCheck(): Promise<any>;
@@ -53,6 +56,40 @@ async function loadSavedGovernance(service: DashboardService): Promise<void> {
   }
 }
 
+async function saveSandbox(service: DashboardService, payload: any): Promise<void> {
+  const file = sandboxPath(service);
+  if (!file) return;
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+async function loadSavedSandbox(service: DashboardService): Promise<void> {
+  const file = sandboxPath(service);
+  if (!file) return;
+  try {
+    const raw = JSON.parse(await readFile(file, 'utf8'));
+    const { workspaces } = normalizeWorkspaces(raw.workspaces);
+    if (!workspaces.length) return;
+    const current = service.getConfig?.() ?? {};
+    service.reloadConfig?.({
+      sandbox: {
+        ...(current.sandbox ?? {}),
+        workspaces,
+        ...(raw.commandDefault ? { commandDefault: raw.commandDefault } : {}),
+        ...(raw.networkDefault ? { networkDefault: raw.networkDefault } : {}),
+      },
+    });
+    registerWorkspaces(service, workspaces);
+  } catch {
+    /* 文件不存在或坏了：按配置里的来 */
+  }
+}
+
+function sandboxPath(service: DashboardService): string | undefined {
+  const stateDir = service.getConfig?.()?.stateDir;
+  return stateDir ? join(stateDir, 'sandbox.json') : undefined;
+}
+
 async function saveGovernance(service: DashboardService, governance: any): Promise<void> {
   const file = governancePath(service);
   if (!file) return;
@@ -71,10 +108,17 @@ function pickGovernance(input: any): Record<string, unknown> {
 function sandboxSummary(config: any) {
   const sandbox = config?.sandbox ?? {};
   const rules = sandbox.rules ?? {};
+  const workspaces = normalizeWorkspaces(sandbox.workspaces).workspaces;
   return {
     mode: sandbox.mode,
     approval: sandbox.approval,
+    commandDefault: sandbox.commandDefault ?? 'allow',
     networkDefault: sandbox.networkDefault,
+    workspaces: workspaces.map((ws) => ({
+      profile: ws.profile,
+      root: ws.root,
+      mode: ws.permissionMode ?? sandbox.mode ?? 'workspace-write',
+    })),
     files: (rules.files ?? []).length,
     commands: (rules.commands ?? []).length,
     network: (rules.network ?? []).length,
@@ -91,8 +135,13 @@ async function buildState(service: DashboardService) {
     service.getAuditLogs({ limit: 20 }).catch(() => []),
   ]);
 
+  const isolation = await verifyIsolation(service, normalizeGovernance(service.governance ?? config.governance).profile).catch(
+    () => null,
+  );
+
   return {
     health,
+    isolation,
     governance: normalizeGovernance(service.governance ?? config.governance),
     sandbox: sandboxSummary(config),
     context: config.context ?? {},
@@ -133,6 +182,23 @@ async function handle(service: DashboardService, method: string, body: any) {
       Object.assign(service.governance ?? {}, merged);
       await saveGovernance(service, merged);
       return { governance: merged };
+    }
+    case 'sandbox': {
+      const current = service.getConfig?.() ?? {};
+      const { workspaces, errors } = normalizeWorkspaces(body?.workspaces);
+      if (errors.length) throw new Error(errors.join('；'));
+      const commandDefault = ['allow', 'ask', 'deny'].includes(body?.commandDefault) ? body.commandDefault : 'allow';
+      const networkDefault = ['allow', 'ask', 'deny'].includes(body?.networkDefault) ? body.networkDefault : 'deny';
+      const sandbox = {
+        ...(current.sandbox ?? {}),
+        workspaces,
+        commandDefault,
+        networkDefault,
+      };
+      service.reloadConfig?.({ sandbox });
+      registerWorkspaces(service, workspaces);
+      await saveSandbox(service, { workspaces, commandDefault, networkDefault });
+      return { sandbox: sandboxSummary(service.getConfig?.() ?? {}) };
     }
     default:
       return null;
@@ -196,6 +262,7 @@ export function mountDashboard(ctx: DashboardCtx, service: DashboardService): bo
   })();
 
   void loadSavedGovernance(service).catch(() => {});
+  void loadSavedSandbox(service).catch(() => {});
 
   const listener = async (req: any, res: any) => {
     try {
