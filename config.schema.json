@@ -160,6 +160,20 @@
           "default": true,
           "description": "删除优先进回收站"
         },
+        "trashRetentionDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365,
+          "default": 7,
+          "description": "回收站保留天数；启动时清理过期目录"
+        },
+        "trashMaxMB": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 10240,
+          "default": 256,
+          "description": "回收站总量上限（MB）；超出时按时间戳从旧到新删"
+        },
         "injectionGuard": {
           "type": "boolean",
           "default": true,

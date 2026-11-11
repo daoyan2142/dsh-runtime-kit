@@ -9,11 +9,12 @@
 // through the same normalizer the startup path uses, then persists to
 // `<stateDir>/governance.json` so a restart keeps the choice.
 // ============================================================================
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { normalizeGovernance } from '../hooks/policy.js';
 import { governanceStats } from '../hooks/index.js';
 import { normalizeWorkspaces, registerWorkspaces, verifyIsolation } from '../workspaces/index.js';
+import { pruneTrash, trashUsage } from '../guard/index.js';
 const API_PREFIX = '/runtime-kit/api/';
 const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'profile'];
 function governancePath(service) {
@@ -141,15 +142,7 @@ async function buildState(service) {
     ]);
     const audit = auditAll.slice(-20);
     const observed = metricsFromAudit(auditAll);
-    let trashFiles = 0;
-    try {
-        const stateDir = config.stateDir;
-        if (stateDir)
-            trashFiles = (await readdir(join(stateDir, 'trash'), { recursive: true })).length;
-    }
-    catch {
-        trashFiles = 0;
-    }
+    const usage = await trashUsage(config.stateDir).catch(() => ({ dir: null, files: 0, bytes: 0, stamps: 0 }));
     const isolation = await verifyIsolation(service, normalizeGovernance(service.governance ?? config.governance).profile).catch(() => null);
     return {
         health,
@@ -160,7 +153,7 @@ async function buildState(service) {
         loop: config.loop ?? {},
         audit,
         observed,
-        trash: { files: trashFiles },
+        trash: { ...usage, retentionDays: config.sandbox?.trashRetentionDays ?? 7, maxMB: config.sandbox?.trashMaxMB ?? 256 },
         truncation: governanceStats(service),
         registry: {
             tools: (service.registry?.listTools?.() ?? []).map((tool) => tool.name),
@@ -213,6 +206,13 @@ async function handle(service, method, body) {
             registerWorkspaces(service, workspaces);
             await saveSandbox(service, { workspaces, commandDefault, networkDefault });
             return { sandbox: sandboxSummary(service.getConfig?.() ?? {}) };
+        }
+        case 'trash/clear': {
+            const current = service.getConfig?.() ?? {};
+            const usage = await trashUsage(current.stateDir);
+            if (usage.dir)
+                await rm(usage.dir, { recursive: true, force: true });
+            return { trash: await trashUsage(current.stateDir) };
         }
         default:
             return null;
@@ -277,6 +277,14 @@ export function mountDashboard(ctx, service) {
         }
     })();
     void loadSavedGovernance(service).catch(() => { });
+    // 启动时按保留策略清一次回收站（失败不影响启动）
+    {
+        const cfg = service.getConfig?.() ?? {};
+        void pruneTrash(cfg.stateDir, {
+            retentionDays: cfg.sandbox?.trashRetentionDays ?? 7,
+            maxMB: cfg.sandbox?.trashMaxMB ?? 256,
+        }).catch(() => { });
+    }
     void loadSavedSandbox(service).catch(() => { });
     const listener = async (req, res) => {
         try {

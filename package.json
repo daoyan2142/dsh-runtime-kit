@@ -1,6 +1,6 @@
 {
   "name": "dsh-runtime-kit",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "DSH runtime plugin: context governance, fast path, PTC orchestration, sandbox isolation and audit — zero business dependencies",
   "keywords": [
     "dsh",
@@ -37,7 +37,8 @@
     "test:dashboard": "node test/dashboard.mjs",
     "test:manifest": "node test/manifest.mjs",
     "test:sandbox": "node test/sandbox.mjs",
-    "prepublishOnly": "npm run test:manifest && npm run test:smoke && npm run test:governance && npm run test:dashboard && npm run test:sandbox",
+    "test:guard": "node test/guard.mjs",
+    "prepublishOnly": "npm run test:manifest && npm run test:smoke && npm run test:governance && npm run test:dashboard && npm run test:sandbox && npm run test:guard",
     "lint": "eslint src --ext .ts"
   },
   "devDependencies": {

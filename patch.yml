@@ -33,6 +33,8 @@
           networkDefault: deny
           backupEnabled: true
           deletionProtection: true
+          trashRetentionDays: 7
+          trashMaxMB: 256
           injectionGuard: true
           sensitiveProtection: true
           shell: pwsh

@@ -535,6 +535,52 @@ window.__ModuleLoader__.load({
           ),
           h(
             'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('回收站', 'Trash')),
+              h(
+                'div',
+                { className: 'rk-row-d' },
+                L(
+                  '写/删之前留的副本；启动时按保留天数与上限清理',
+                  'Copies kept before writes and deletes; pruned at startup by age and size',
+                ),
+              ),
+            ),
+            h(
+              'div',
+              { className: 'rk-sub' },
+              (state?.trash?.files || 0) +
+                L(' 个文件 · ', ' files · ') +
+                fmtBytes(state?.trash?.bytes || 0) +
+                ' · ' +
+                L('保留 ', 'keep ') +
+                (state?.trash?.retentionDays ?? 7) +
+                L(' 天 / 上限 ', 'd / cap ') +
+                (state?.trash?.maxMB ?? 256) +
+                ' MB',
+            ),
+            h(
+              'button',
+              {
+                className: 'rk-btn',
+                disabled: !(state?.trash?.files > 0) || Boolean(busy),
+                onClick: async () => {
+                  try {
+                    await call('trash/clear', {})
+                    await load()
+                  } catch (e) {
+                    setError(String(e.message || e))
+                  }
+                },
+              },
+              L('清空', 'Clear'),
+            ),
+          ),
+          h(
+            'div',
             { className: 'rk-sub' },
             L('基线', 'Mode') + ': ' + (sandbox.mode || '—') + ' · ' + L('审批', 'Approval') + ': ' + (sandbox.approval || '—') + ' · ' + L('规则数（文件/命令/网络）', 'Rules (file/cmd/net)') + ': ' + (sandbox.files || 0) + '/' + (sandbox.commands || 0) + '/' + (sandbox.network || 0),
           ),
