@@ -221,6 +221,28 @@ try {
   check('无法创建 junction（跳过本项）', true, String(error.message).slice(0, 60));
 }
 
+
+console.log('\n[13] 快照策略表');
+const { resolveSnapshotTargets, readPathSpec } = await import(new URL('../dist/hooks/policy.js', import.meta.url).href);
+const args = { path: 'D:\\work\\a.txt', files: [{ path: 'D:\\work\\b.txt' }, { path: 'D:\\work\\c.txt' }] };
+check('readPathSpec 支持点号路径', readPathSpec(args, 'path')[0] === 'D:\\work\\a.txt');
+check('readPathSpec 支持数组', readPathSpec(args, 'files[].path').length === 2, JSON.stringify(readPathSpec(args, 'files[].path')));
+check('readPathSpec 取不到时返回空', readPathSpec(args, 'nope.deep').length === 0);
+
+const withPolicy = resolveSnapshotTargets('my_writer', args, {
+  my_writer: { paths: ['files[].path'], operation: 'write' },
+});
+check('策略表决定取哪些路径', withPolicy.paths.length === 2 && withPolicy.paths[0] === 'D:\\work\\b.txt', JSON.stringify(withPolicy));
+check('策略表决定操作类型', withPolicy.operation === 'write');
+
+const fallback = resolveSnapshotTargets('write', { path: 'D:\\work\\a.txt' }, {});
+check('未登记的工具回落到启发式', fallback.paths.includes('D:\\work\\a.txt') && fallback.operation === 'write');
+
+const customOp = resolveSnapshotTargets('my_deleter', { target: 'D:\\work\\d.txt' }, {
+  my_deleter: { paths: ['target'], operation: 'delete' },
+});
+check('自定义字段名也能识别', customOp.paths[0] === 'D:\\work\\d.txt' && customOp.operation === 'delete');
+
 console.log(`\n========== 结果: ${pass} 通过, ${fail} 失败 ==========`);
 await fs.rm(tmp, { recursive: true, force: true });
 if (fail > 0) process.exit(1);

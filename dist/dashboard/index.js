@@ -16,7 +16,7 @@ import { governanceStats } from '../hooks/index.js';
 import { normalizeWorkspaces, registerWorkspaces, verifyIsolation } from '../workspaces/index.js';
 import { listTrash, pruneTrash, restoreTrash, trashUsage } from '../guard/index.js';
 const API_PREFIX = '/runtime-kit/api/';
-const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'profile'];
+const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'projection', 'profile'];
 function governancePath(service) {
     const stateDir = service.getConfig?.()?.stateDir;
     return stateDir ? join(stateDir, 'governance.json') : undefined;

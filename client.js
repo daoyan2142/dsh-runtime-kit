@@ -292,6 +292,7 @@ window.__ModuleLoader__.load({
       const metrics = state?.metrics || []
       const observed = state?.observed || {}
       const truncation = governance?.truncation || { mode: 'off', maxBytes: 4096, spill: true, perTool: {} }
+      const projection = governance?.projection || { mode: 'off', maxLines: {} }
       const truncStats = state?.truncation || {}
 
       return h(
@@ -669,6 +670,50 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
+          ),
+          h(
+            'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('行投影', 'Line projection')),
+              h(
+                'div',
+                { className: 'rk-row-d' },
+                L('按工具限制展示行数，切掉的部分有标注', 'Cap displayed lines per tool; the cut is annotated'),
+              ),
+            ),
+            h(
+              'div',
+              { className: 'rk-seg' },
+              ...[
+                ['off', L('关', 'off')],
+                ['on', L('开', 'on')],
+              ].map(([value, label]) =>
+                h(
+                  'button',
+                  {
+                    key: value,
+                    className: (projection.mode || 'off') === value ? 'on' : '',
+                    onClick: () => setGovernance({ ...governance, projection: { ...projection, mode: value } }),
+                  },
+                  label,
+                ),
+              ),
+            ),
+            h('input', {
+              type: 'number',
+              className: 'rk-num',
+              min: 0,
+              step: 50,
+              value: projection.maxLines?.default ?? 0,
+              onChange: (e) =>
+                setGovernance({
+                  ...governance,
+                  projection: { ...projection, maxLines: { ...(projection.maxLines || {}), default: Number(e.target.value) || 0 } },
+                }),
+            }),
           ),
           h(
             'div',

@@ -17,7 +17,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { installWorkspaces } from '../workspaces/index.js';
 import { snapshotPaths, trashStamp } from '../guard/index.js';
 import { join } from 'node:path';
-import { DEFAULT_GOVERNANCE, detectInjection, extractTargets, inferFileOperation, normalizeGovernance, decideCommand, redactSecrets, shortHash, truncateBlocks, } from './policy.js';
+import { DEFAULT_GOVERNANCE, detectInjection, extractTargets, inferFileOperation, normalizeGovernance, decideCommand, resolveSnapshotTargets, redactSecrets, shortHash, truncateBlocks, projectLines, } from './policy.js';
 export { DEFAULT_GOVERNANCE, normalizeGovernance };
 const STATS = new WeakMap();
 export function governanceStats(service) {
@@ -168,7 +168,8 @@ export function installGovernance(ctx, service, raw) {
                 return next();
             const truncation = config.truncation;
             const wantsTruncation = Boolean(truncation) && truncation.mode !== 'off';
-            if (!config.redaction && config.injection === 'off' && !wantsTruncation)
+            const wantsProjection = config.projection?.mode === 'on';
+            if (!config.redaction && config.injection === 'off' && !wantsTruncation && !wantsProjection)
                 return next();
             if (result?.isError)
                 return next(); // 失败结果不改写：accept 会把它变成成功
@@ -257,7 +258,24 @@ export function installGovernance(ctx, service, raw) {
                     });
                 }
             }
-            const changed = inspected.redacted.length > 0 || inspected.injected.length > 0 || cutBytes > 0;
+            // 行投影：按工具限制行数，和按字节截断是两个维度
+            let projectedLines = 0;
+            const projection = config.projection;
+            if (projection && projection.mode === 'on' && content.length) {
+                const limit = projection.maxLines?.[tool] ?? projection.maxLines?.default ?? 0;
+                if (limit > 0) {
+                    content = content.map((block) => {
+                        if (!block || typeof block.text !== 'string')
+                            return block;
+                        const projected = projectLines(block.text, limit);
+                        if (!projected)
+                            return block;
+                        projectedLines += projected.total - projected.shown;
+                        return { ...block, text: projected.text + `\n…[runtime-kit] projected: ${projected.shown}/${projected.total} lines` };
+                    });
+                }
+            }
+            const changed = inspected.redacted.length > 0 || inspected.injected.length > 0 || cutBytes > 0 || projectedLines > 0;
             if (!changed)
                 return next();
             audit(service, config, {
@@ -269,6 +287,7 @@ export function installGovernance(ctx, service, raw) {
                 durationMs: 0,
                 ...(inspected.redacted.length ? { error: `redacted:${inspected.redacted.join(',')}` } : {}),
                 ...(cutBytes ? { error: `truncated:${cutBytes}B${spilled ? `:${spilled}files` : ''}` } : {}),
+                ...(projectedLines ? { error: `projected:${projectedLines}lines` } : {}),
             });
             return { kind: 'accept', content };
         }
@@ -285,16 +304,17 @@ export function installGovernance(ctx, service, raw) {
             if (verdict.action === 'allow') {
                 // 放行之前先给会被改动的文件留一份副本（backupEnabled / deletionProtection）
                 const sandboxConfig = service.getConfig?.()?.sandbox ?? {};
-                const operation = inferFileOperation(String(exec?.name ?? ''));
+                // 有策略表就按策略取路径，没有才回落到启发式
+                const plan = resolveSnapshotTargets(String(exec?.name ?? ''), exec?.arguments, sandboxConfig.snapshotPolicy);
+                const operation = plan.operation;
                 const wantsCopy = operation === 'write'
                     ? sandboxConfig.backupEnabled !== false
                     : operation === 'delete'
                         ? sandboxConfig.deletionProtection !== false
                         : false;
                 if (wantsCopy) {
-                    const targets = extractTargets(exec?.arguments);
-                    if (targets.paths.length) {
-                        const copy = await snapshotPaths(targets.paths, {
+                    if (plan.paths.length) {
+                        const copy = await snapshotPaths(plan.paths, {
                             stateDir: service.getConfig?.()?.stateDir,
                             enabled: true,
                             stamp: trashStamp(),

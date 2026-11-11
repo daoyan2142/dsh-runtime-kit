@@ -18,7 +18,7 @@ import { normalizeWorkspaces, registerWorkspaces, verifyIsolation } from '../wor
 import { listTrash, pruneTrash, restoreTrash, trashUsage } from '../guard/index.js';
 
 const API_PREFIX = '/runtime-kit/api/';
-const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'profile'] as const;
+const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'projection', 'profile'] as const;
 
 interface DashboardService {
   getConfig(): any;

@@ -31,6 +31,8 @@ export interface GovernanceConfig {
   sandbox: boolean;
   /** 返回体裁剪——默认关闭，shadow 只记账 */
   truncation: TruncationConfig;
+  /** 行投影——默认关闭，按工具限制行数 */
+  projection: ProjectionConfig;
   /** 用哪个已注册工作区做沙箱判定 */
   profile: string;
 }
@@ -49,6 +51,7 @@ export const DEFAULT_GOVERNANCE: GovernanceConfig = {
   injection: 'annotate',
   sandbox: false,
   truncation: { ...DEFAULT_TRUNCATION },
+  projection: { mode: 'off', maxLines: {} },
   profile: 'default',
 };
 
@@ -84,6 +87,7 @@ export function normalizeGovernance(raw: unknown): GovernanceConfig {
     injection,
     sandbox: input.sandbox === true,
     truncation: normalizeTruncation(input.truncation),
+    projection: normalizeProjection(input.projection),
     profile: typeof input.profile === 'string' && input.profile ? input.profile : DEFAULT_GOVERNANCE.profile,
   };
 }
@@ -333,6 +337,118 @@ export function truncateBlocks(
   });
 
   return { blocks: out, cutBytes, touched };
+}
+
+
+
+// ============================================================================
+// 行投影
+// ============================================================================
+
+export interface ProjectionConfig {
+  /** off 不动；on 才按工具限制行数 */
+  mode: 'off' | 'on';
+  /** 按工具给行数上限，键 `default` 兜底；0 表示不限制 */
+  maxLines: Record<string, number>;
+}
+
+export const DEFAULT_PROJECTION: ProjectionConfig = { mode: 'off', maxLines: {} };
+
+export function normalizeProjection(raw: unknown): ProjectionConfig {
+  const input = (raw ?? {}) as Partial<ProjectionConfig>;
+  const maxLines: Record<string, number> = {};
+  if (input.maxLines && typeof input.maxLines === 'object') {
+    for (const [tool, value] of Object.entries(input.maxLines)) {
+      const lines = Number(value);
+      if (Number.isFinite(lines) && lines > 0) maxLines[tool] = Math.floor(lines);
+    }
+  }
+  return { mode: input.mode === 'on' ? 'on' : 'off', maxLines };
+}
+
+/**
+ * 只保留前 N 行。返回 null 表示不需要改动。
+ *
+ * 与按字节截断的区别：这条按"行"算，给表格/搜索结果这类结构化文本用——
+ * 切掉整行不会把一行里的字段切开。
+ */
+export function projectLines(text: string, maxLines: number): { text: string; shown: number; total: number } | null {
+  if (!Number.isFinite(maxLines) || maxLines <= 0) return null;
+  const lines = String(text).split('\n');
+  if (lines.length <= maxLines) return null;
+  return {
+    text: lines.slice(0, maxLines).join('\n'),
+    shown: maxLines,
+    total: lines.length,
+  };
+}
+
+// ============================================================================
+// 快照策略表
+// ============================================================================
+
+export type FileOperation = 'read' | 'write' | 'delete';
+
+export interface SnapshotPolicyEntry {
+  /** 参数里哪几个字段是路径，支持 `arguments.path` 与 `arguments.files[]` */
+  paths: string[];
+  operation: FileOperation;
+}
+
+export type SnapshotPolicy = Record<string, SnapshotPolicyEntry>;
+
+/** 按 `a.b[].c` 取值，返回其中所有字符串。 */
+export function readPathSpec(source: unknown, spec: string): string[] {
+  const segments = String(spec ?? '')
+    .split('.')
+    .filter(Boolean);
+  let current: unknown[] = [source];
+
+  for (const segment of segments) {
+    const isArray = segment.endsWith('[]');
+    const key = isArray ? segment.slice(0, -2) : segment;
+    const next: unknown[] = [];
+    for (const item of current) {
+      if (item == null || typeof item !== 'object') continue;
+      const value = (item as Record<string, unknown>)[key];
+      if (value === undefined) continue;
+      if (isArray) {
+        if (Array.isArray(value)) next.push(...value);
+        else next.push(value);
+      } else {
+        next.push(value);
+      }
+    }
+    current = next;
+  }
+
+  return current.filter((item): item is string => typeof item === 'string' && item.length > 0);
+}
+
+/**
+ * 决定这次调用要备份哪些文件。
+ *
+ * 有策略就完全照策略来（字段名与操作都由配置说了算，契约明确）；
+ * 没有策略才回落到按参数形状猜——那是为了没登记的工具也能尽量保住一份。
+ */
+export function resolveSnapshotTargets(
+  toolName: string,
+  args: unknown,
+  policy?: SnapshotPolicy
+): { paths: string[]; operation: FileOperation } {
+  const entry = policy?.[String(toolName ?? '')];
+  if (entry && Array.isArray(entry.paths) && entry.paths.length) {
+    const paths: string[] = [];
+    for (const spec of entry.paths) {
+      for (const value of readPathSpec(args, spec)) {
+        if (!paths.includes(value)) paths.push(value);
+      }
+    }
+    return { paths, operation: entry.operation ?? 'write' };
+  }
+
+  const targets = extractTargets(args);
+  return { paths: targets.paths, operation: inferFileOperation(toolName) };
 }
 
 export type PolicyAction = 'allow' | 'ask' | 'deny';

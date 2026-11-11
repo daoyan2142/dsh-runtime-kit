@@ -18,6 +18,7 @@ export const DEFAULT_GOVERNANCE = {
     injection: 'annotate',
     sandbox: false,
     truncation: { ...DEFAULT_TRUNCATION },
+    projection: { mode: 'off', maxLines: {} },
     profile: 'default',
 };
 function normalizeTruncation(raw) {
@@ -51,6 +52,7 @@ export function normalizeGovernance(raw) {
         injection,
         sandbox: input.sandbox === true,
         truncation: normalizeTruncation(input.truncation),
+        projection: normalizeProjection(input.projection),
         profile: typeof input.profile === 'string' && input.profile ? input.profile : DEFAULT_GOVERNANCE.profile,
     };
 }
@@ -251,6 +253,88 @@ export function truncateBlocks(blocks, budget, marker) {
         out.push({ ...block, text: kept });
     });
     return { blocks: out, cutBytes, touched };
+}
+export const DEFAULT_PROJECTION = { mode: 'off', maxLines: {} };
+export function normalizeProjection(raw) {
+    const input = (raw ?? {});
+    const maxLines = {};
+    if (input.maxLines && typeof input.maxLines === 'object') {
+        for (const [tool, value] of Object.entries(input.maxLines)) {
+            const lines = Number(value);
+            if (Number.isFinite(lines) && lines > 0)
+                maxLines[tool] = Math.floor(lines);
+        }
+    }
+    return { mode: input.mode === 'on' ? 'on' : 'off', maxLines };
+}
+/**
+ * 只保留前 N 行。返回 null 表示不需要改动。
+ *
+ * 与按字节截断的区别：这条按"行"算，给表格/搜索结果这类结构化文本用——
+ * 切掉整行不会把一行里的字段切开。
+ */
+export function projectLines(text, maxLines) {
+    if (!Number.isFinite(maxLines) || maxLines <= 0)
+        return null;
+    const lines = String(text).split('\n');
+    if (lines.length <= maxLines)
+        return null;
+    return {
+        text: lines.slice(0, maxLines).join('\n'),
+        shown: maxLines,
+        total: lines.length,
+    };
+}
+/** 按 `a.b[].c` 取值，返回其中所有字符串。 */
+export function readPathSpec(source, spec) {
+    const segments = String(spec ?? '')
+        .split('.')
+        .filter(Boolean);
+    let current = [source];
+    for (const segment of segments) {
+        const isArray = segment.endsWith('[]');
+        const key = isArray ? segment.slice(0, -2) : segment;
+        const next = [];
+        for (const item of current) {
+            if (item == null || typeof item !== 'object')
+                continue;
+            const value = item[key];
+            if (value === undefined)
+                continue;
+            if (isArray) {
+                if (Array.isArray(value))
+                    next.push(...value);
+                else
+                    next.push(value);
+            }
+            else {
+                next.push(value);
+            }
+        }
+        current = next;
+    }
+    return current.filter((item) => typeof item === 'string' && item.length > 0);
+}
+/**
+ * 决定这次调用要备份哪些文件。
+ *
+ * 有策略就完全照策略来（字段名与操作都由配置说了算，契约明确）；
+ * 没有策略才回落到按参数形状猜——那是为了没登记的工具也能尽量保住一份。
+ */
+export function resolveSnapshotTargets(toolName, args, policy) {
+    const entry = policy?.[String(toolName ?? '')];
+    if (entry && Array.isArray(entry.paths) && entry.paths.length) {
+        const paths = [];
+        for (const spec of entry.paths) {
+            for (const value of readPathSpec(args, spec)) {
+                if (!paths.includes(value))
+                    paths.push(value);
+            }
+        }
+        return { paths, operation: entry.operation ?? 'write' };
+    }
+    const targets = extractTargets(args);
+    return { paths: targets.paths, operation: inferFileOperation(toolName) };
 }
 /**
  * 命令判定：**默认放行，规则显式拦截**。

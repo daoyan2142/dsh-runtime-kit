@@ -13,6 +13,7 @@ import {
   byteLength,
   sliceToBytes,
   truncateBlocks,
+  projectLines,
 } from '../dist/hooks/policy.js';
 import { inspectBlocks, evaluateCall, installGovernance, governanceStats } from '../dist/hooks/index.js';
 import * as os from 'node:os';
@@ -216,6 +217,34 @@ check('默认 truncation 是 off', govDefault.truncation.mode === 'off' && govDe
 const govOn = normalizeGovernance({ truncation: { mode: 'on', maxBytes: 8192, perTool: { read: 16384 } } });
 check('perTool 被保留', govOn.truncation.perTool.read === 16384);
 check('非法预算回落到默认', normalizeGovernance({ truncation: { mode: 'on', maxBytes: 10 } }).truncation.maxBytes === 4096);
+
+
+console.log('\n[10] 行投影');
+const many = Array.from({ length: 100 }, (_, i) => 'line ' + (i + 1)).join('\n');
+const projected = projectLines(many, 10);
+check('超出上限时只保留前 N 行', projected && projected.text.split('\n').length === 10);
+check('报告总行数与展示行数', projected && projected.total === 100 && projected.shown === 10);
+check('未超上限时不改动', projectLines('a\nb', 10) === null);
+check('上限为 0 时不改动', projectLines(many, 0) === null);
+
+const projCtx = makeCtx();
+installGovernance(projCtx, svc, { projection: { mode: 'on', maxLines: { default: 2 } } });
+const projOut = await projCtx.handlers.get('tools/post-execute')(
+  { name: 'grep', arguments: {} },
+  { isError: false, content: [{ type: 'text', text: many }] },
+  async () => ({ kind: 'accept', marker: 'plain' }),
+);
+check('投影开启后返回被裁剪', projOut.kind === 'accept' && String(projOut.content[0].text).split('\n').length <= 3);
+check('裁剪处有标注', String(projOut.content[0].text).includes('projected'));
+
+const projOffCtx = makeCtx();
+installGovernance(projOffCtx, svc, { projection: { mode: 'off', maxLines: { default: 2 } } });
+const projOff = await projOffCtx.handlers.get('tools/post-execute')(
+  { name: 'grep', arguments: {} },
+  { isError: false, content: [{ type: 'text', text: many }] },
+  async () => ({ kind: 'accept', marker: 'plain' }),
+);
+check('投影关闭时原样放行', projOff.marker === 'plain');
 
 console.log(`\n========== 结果: ${pass} 通过, ${fail} 失败 ==========`);
 if (fail > 0) process.exit(1);

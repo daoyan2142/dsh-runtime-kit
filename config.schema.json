@@ -160,6 +160,19 @@
           "default": true,
           "description": "删除优先进回收站"
         },
+        "snapshotPolicy": {
+          "type": "object",
+          "description": "按工具声明快照路径，取代键名启发式；未登记的工具仍走启发式",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "operation": { "type": "string", "enum": ["read", "write", "delete"] }
+            },
+            "required": ["paths", "operation"],
+            "additionalProperties": false
+          }
+        },
         "trashRetentionDays": {
           "type": "integer",
           "minimum": 1,
@@ -260,6 +273,14 @@
           "type": "boolean",
           "default": false,
           "description": "启用调用前拦截（文件/命令/网络/工具启停）；开启后会真的拒绝调用"
+        },
+        "projection": {
+          "type": "object",
+          "properties": {
+            "mode": { "type": "string", "enum": ["off", "on"], "default": "off", "description": "行投影：按工具限制展示行数" },
+            "maxLines": { "type": "object", "additionalProperties": { "type": "integer" }, "description": "按工具给行数上限，键 default 兜底" }
+          },
+          "additionalProperties": false
         },
         "truncation": {
           "type": "object",

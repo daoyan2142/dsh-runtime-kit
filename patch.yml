@@ -33,6 +33,7 @@
           networkDefault: deny
           backupEnabled: true
           deletionProtection: true
+          snapshotPolicy: {}
           trashRetentionDays: 7
           trashMaxMB: 256
           injectionGuard: true
@@ -40,6 +41,9 @@
           shell: pwsh
           workspaceTrust: true
           toolControl: {}
+        projection:
+          mode: off
+          maxLines: {}
         truncation:
           mode: off
           maxBytes: 4096
