@@ -409,8 +409,15 @@ class Sandbox {
 
   createExecutionDomain() { return new LocalExecutionDomain(this); }
 
-  matchGlob(s, p) {
-    return new RegExp('^' + p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$').test(s);
+  matchGlob(value, pattern) {
+      const normalize = (input) => String(input).replace(/\\/g, '/');
+      const source = normalize(pattern).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*').replace(/\?/g, '.');
+      try {
+          return new RegExp('^' + source + '$').test(normalize(value));
+      }
+      catch {
+          return false;
+      }
   }
 
   allow(reason, rule) {
@@ -1024,7 +1031,7 @@ class RuntimeKitServiceImpl {
     }
     const all = Object.values(checks).every(c => c.status === 'pass');
     const any = Object.values(checks).some(c => c.status === 'fail');
-    return { status: any ? 'unhealthy' : all ? 'healthy' : 'degraded', checks, version: '0.1.1', build: 'whole-line-ptc+workspace-hooks', dshVersion: process.env.DSH_VERSION ?? 'unknown' };
+    return { status: any ? 'unhealthy' : all ? 'healthy' : 'degraded', checks, version: this.version ?? '0.0.0', build: 'whole-line-ptc+workspace-hooks', dshVersion: process.env.DSH_VERSION ?? 'unknown' };
   }
 
   reloadConfig(p) {
@@ -1118,6 +1125,9 @@ async function apply(ctx, raw = {}) {
   await fs.mkdir(config.stateDir, { recursive: true });
 
   const svc = new RuntimeKitServiceImpl(config);
+  try {
+    svc.version = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
+  } catch { /* 读不到就保持未知 */ }
   ctx.provide('runtimeKit', svc);
 
   // ---- 治理钩子：审计 / 脱敏 / 注入检测 / 沙箱（全部 fail-open） ----

@@ -386,10 +386,131 @@ export class Sandbox {
   }
 
   // ========== 内部辅助 ==========
-  private matchGlob(str: string, pattern: string): boolean {
+  private matchGlob(value: string, pattern: string): boolean {
+    // Windows 下 path.relative 给的是反斜杠，规则一般写成正斜杠：两边都归一化。
+    const normalize = (input: string) => String(input).replace(/\\/g, '/');
+    const source = normalize(pattern)
+      .replace(/[.+^${}()|[\]\\]/g, '\\  private matchGlob(str: string, pattern: string): boolean {
     // 简单的 glob 匹配，实际可用 minimatch
     const regex = new RegExp('^' + pattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
     return regex.test(str);
+  }')
+      .replace(/\*\*/g, '\u0000')
+      .replace(/\*/g, '[^/]*')
+      .replace(/\u0000/g, '.*')
+      .replace(/\?/g, '.');
+    try {
+      return new RegExp('^' + source + '
+
+  private allow(reason: string, ruleMatched?: FileRule | CommandRule | NetworkRule): SandboxDecision {
+    return { allowed: true, action: 'allow', reason, ruleMatched, requiresApproval: false };
+  }
+
+  private deny(reason: string, ruleType: 'file' | 'command' | 'network' | 'tool', operation: string, ruleMatched?: FileRule | CommandRule | NetworkRule): SandboxDecision {
+    return { allowed: false, action: 'deny', reason, ruleMatched, requiresApproval: false };
+  }
+
+  private ask(reason: string, ruleMatched?: FileRule | CommandRule | NetworkRule): SandboxDecision {
+    return { allowed: false, action: 'ask', reason, ruleMatched, requiresApproval: true };
+  }
+}
+
+/** 执行域接口（可被远程 box 替换） */
+export interface ExecutionDomain {
+  fs: FileSystemAPI;
+  shell: ShellAPI;
+  subprocess: SubprocessAPI;
+  network: NetworkAPI;
+}
+
+/** 文件系统 API */
+export interface FileSystemAPI {
+  read(path: string): Promise<string>;
+  write(path: string, content: string): Promise<void>;
+  delete(path: string): Promise<void>;
+  list(path: string): Promise<string[]>;
+  stat(path: string): Promise<{ size: number; mtime: Date; isDirectory: boolean }>;
+  mkdir(path: string, recursive?: boolean): Promise<void>;
+}
+
+/** Shell API */
+export interface ShellAPI {
+  execute(command: string, args: string[], options?: { cwd?: string; env?: Record<string, string> }): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+}
+
+/** 子进程 API */
+export interface SubprocessAPI {
+  spawn(command: string, args: string[], options?: { cwd?: string; env?: Record<string, string> }): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+}
+
+/** 网络 API */
+export interface NetworkAPI {
+  fetch(url: string, options?: RequestInit): Promise<Response>;
+}
+
+/** 本地执行域实现 */
+class LocalExecutionDomain implements ExecutionDomain {
+  constructor(private sandbox: Sandbox) {}
+
+  fs: FileSystemAPI = {
+    read: async (p: string) => {
+      const { readFile } = await import('fs/promises');
+      return readFile(p, 'utf-8');
+    },
+    write: async (p: string, c: string) => {
+      const { writeFile, mkdir } = await import('fs/promises');
+      await mkdir(path.dirname(p), { recursive: true });
+      await writeFile(p, c, 'utf-8');
+    },
+    delete: async (p: string) => {
+      const { unlink, rmdir } = await import('fs/promises');
+      try { await unlink(p); } catch { await rmdir(p, { recursive: true }); }
+    },
+    list: async (p: string) => {
+      const { readdir } = await import('fs/promises');
+      return readdir(p);
+    },
+    stat: async (p: string) => {
+      const { stat } = await import('fs/promises');
+      const s = await stat(p);
+      return { size: s.size, mtime: s.mtime, isDirectory: s.isDirectory() };
+    },
+    mkdir: async (p: string, recursive = true) => {
+      const { mkdir } = await import('fs/promises');
+      await mkdir(p, { recursive });
+    },
+  };
+
+  shell: ShellAPI = {
+    execute: async (cmd, args, opts) => {
+      const { spawn } = await import('child_process');
+      const { command, args: shellArgs } = this.sandbox.getShellExecutor();
+      const fullArgs = [...shellArgs, `${cmd} ${args.join(' ')}`];
+      return new Promise((resolve, reject) => {
+        const child = spawn(command, fullArgs, { cwd: opts?.cwd, env: { ...process.env, ...opts?.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = '', stderr = '';
+        child.stdout?.on('data', d => stdout += d.toString());
+        child.stderr?.on('data', d => stderr += d.toString());
+        child.on('close', code => resolve({ stdout, stderr, exitCode: code ?? 1 }));
+        child.on('error', reject);
+      });
+    },
+  };
+
+  subprocess: SubprocessAPI = {
+    spawn: async (cmd, args, opts) => this.shell.execute(cmd, args, opts),
+  };
+
+  network: NetworkAPI = {
+    fetch: async (url, opts) => {
+      // 实际需经过 validateNetwork
+      return fetch(url, opts);
+    },
+  };
+}).test(normalize(value));
+    } catch {
+      return false;
+    }
   }
 
   private allow(reason: string, ruleMatched?: FileRule | CommandRule | NetworkRule): SandboxDecision {
