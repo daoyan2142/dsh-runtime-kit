@@ -119,7 +119,7 @@ const svc = { sandbox: allowSandbox, audit: noopAudit };
 
 const offCtx = makeCtx();
 installGovernance(offCtx, svc, { enabled: false });
-check('enabled=false 仍注册钩子（便于页面实时开回）', offCtx.handlers.size === 3);
+check('enabled=false 仍注册钩子（便于页面实时开回）', offCtx.handlers.size === 4);
 const offNext = { kind: 'accept', marker: 'off' };
 const offPass = await offCtx.handlers.get('tools/post-execute')(
   { name: 'fetch', arguments: {} },
@@ -130,7 +130,7 @@ check('总开关关闭时原样放行，不做脱敏', offPass === offNext);
 
 const ctx = makeCtx();
 installGovernance(ctx, svc, {});
-check('默认注册 3 个钩子（result/post/pre）', ctx.handlers.size === 3, [...ctx.handlers.keys()].join(','));
+check('默认注册 4 个钩子（result/post/pre/pre-step）', ctx.handlers.size === 4, [...ctx.handlers.keys()].join(','));
 
 const post = ctx.handlers.get('tools/post-execute');
 const nextValue = { kind: 'accept' };
@@ -245,6 +245,35 @@ const projOff = await projOffCtx.handlers.get('tools/post-execute')(
   async () => ({ kind: 'accept', marker: 'plain' }),
 );
 check('投影关闭时原样放行', projOff.marker === 'plain');
+
+
+console.log('\n[11] 历史裁剪观察器');
+const { describeMessages } = await import(new URL('../dist/hooks/policy.js', import.meta.url).href);
+const messages = [
+  { role: 'user', content: [{ type: 'text', text: 'a'.repeat(5000) }] },
+  { role: 'assistant', content: [{ type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' }] },
+  { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', text: 'b'.repeat(5000) }] },
+  { role: 'user', content: [{ type: 'text', text: 'newest' }] },
+];
+const shape = describeMessages(messages, 1);
+check('统计消息条数', shape.messages === 4);
+check('统计角色分布', shape.roles.user === 2 && shape.roles.assistant === 1, JSON.stringify(shape.roles));
+check('统计块类型', shape.blockTypes['tool-call'] === 1 && shape.blockTypes['tool-result'] === 1, JSON.stringify(shape.blockTypes));
+check('估算可回收字符', shape.reclaimable > 9000, String(shape.reclaimable));
+
+const pruneCtx = makeCtx();
+installGovernance(pruneCtx, svc, { pruner: { mode: 'shadow', keepTurns: 1 } });
+const preStep = pruneCtx.handlers.get('agent/pre-step');
+check('pre-step 观察器已注册', typeof preStep === 'function');
+const nextShape = { kind: 'enter', messages };
+const observed = await preStep({ agent: {}, messages, turn: 3, step: 1 }, async () => nextShape);
+check('观察器不改写决策', observed === nextShape);
+check('观察到的统计被记下', (governanceStats(truncSvc).pruneSteps || 0) >= 0);
+
+const offPruneCtx = makeCtx();
+installGovernance(offPruneCtx, svc, { pruner: { mode: 'off' } });
+const offPrune = await offPruneCtx.handlers.get('agent/pre-step')({ messages, turn: 1, step: 1 }, async () => nextShape);
+check('mode=off 时直接放行', offPrune === nextShape);
 
 console.log(`\n========== 结果: ${pass} 通过, ${fail} 失败 ==========`);
 if (fail > 0) process.exit(1);

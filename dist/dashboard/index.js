@@ -160,6 +160,12 @@ async function buildState(service) {
             recent: await listTrash(config.stateDir, 6).catch(() => []),
         },
         truncation: governanceStats(service),
+        prune: {
+            mode: normalizeGovernance(service.governance ?? config.governance).pruner.mode,
+            steps: governanceStats(service).pruneSteps ?? 0,
+            reclaimable: governanceStats(service).pruneReclaimable ?? 0,
+            shape: governanceStats(service).lastShape ?? null,
+        },
         registry: {
             tools: (service.registry?.listTools?.() ?? []).map((tool) => tool.name),
             templates: (service.registry?.listTemplates?.() ?? []).map((template) => template.name),

@@ -31,6 +31,7 @@ import {
   shortHash,
   truncateBlocks,
   projectLines,
+  describeMessages,
   GovernanceConfig,
 } from './policy.js';
 
@@ -78,6 +79,12 @@ export interface GovernanceStats {
   savedBytes: number;
   spillFiles: number;
   lastAt: string | null;
+  /** 观察到的 pre-step 次数 */
+  pruneSteps?: number;
+  /** 若只保留最近 keepTurns 轮，理论上能省的字符数 */
+  pruneReclaimable?: number;
+  /** 最近一次观察到的消息结构 */
+  lastShape?: unknown;
 }
 
 const STATS = new WeakMap<object, GovernanceStats>();
@@ -85,7 +92,7 @@ const STATS = new WeakMap<object, GovernanceStats>();
 export function governanceStats(service: object): GovernanceStats {
   let stats = STATS.get(service);
   if (!stats) {
-    stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null };
+    stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null, pruneSteps: 0, pruneReclaimable: 0 };
     STATS.set(service, stats);
   }
   return stats;
@@ -370,6 +377,34 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
         ...(projectedLines ? { error: `projected:${projectedLines}lines` } : {}),
       });
       return { kind: 'accept', content };
+    } catch {
+      return next();
+    }
+  });
+
+
+  // ---- 历史裁剪：只观察，绝不改写（on 待结构确认后再实现） ----
+  ctx.on('agent/pre-step', async (payload: any, next: () => Promise<any>) => {
+    try {
+      const pruner = config.pruner;
+      if (!config.enabled || !pruner || pruner.mode === 'off') return next();
+      const shape = describeMessages(payload?.messages ?? [], pruner.keepTurns);
+      const stats = governanceStats(service);
+      stats.pruneSteps = (stats.pruneSteps ?? 0) + 1;
+      stats.pruneReclaimable = (stats.pruneReclaimable ?? 0) + shape.reclaimable;
+      stats.lastShape = shape;
+      if (shape.reclaimable > 0) {
+        audit(service, config, {
+          profile: config.profile,
+          tool: 'agent/pre-step',
+          action: 'return',
+          paramsHash: String(payload?.turn ?? ''),
+          result: 'SUCCESS',
+          durationMs: 0,
+          error: `prune:shadow:${shape.reclaimable}B`,
+        });
+      }
+      return next();
     } catch {
       return next();
     }

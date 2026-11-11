@@ -17,13 +17,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { installWorkspaces } from '../workspaces/index.js';
 import { snapshotPaths, trashStamp } from '../guard/index.js';
 import { join } from 'node:path';
-import { DEFAULT_GOVERNANCE, detectInjection, extractTargets, inferFileOperation, normalizeGovernance, decideCommand, resolveSnapshotTargets, redactSecrets, shortHash, truncateBlocks, projectLines, } from './policy.js';
+import { DEFAULT_GOVERNANCE, detectInjection, extractTargets, inferFileOperation, normalizeGovernance, decideCommand, resolveSnapshotTargets, redactSecrets, shortHash, truncateBlocks, projectLines, describeMessages, } from './policy.js';
 export { DEFAULT_GOVERNANCE, normalizeGovernance };
 const STATS = new WeakMap();
 export function governanceStats(service) {
     let stats = STATS.get(service);
     if (!stats) {
-        stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null };
+        stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null, pruneSteps: 0, pruneReclaimable: 0 };
         STATS.set(service, stats);
     }
     return stats;
@@ -290,6 +290,34 @@ export function installGovernance(ctx, service, raw) {
                 ...(projectedLines ? { error: `projected:${projectedLines}lines` } : {}),
             });
             return { kind: 'accept', content };
+        }
+        catch {
+            return next();
+        }
+    });
+    // ---- 历史裁剪：只观察，绝不改写（on 待结构确认后再实现） ----
+    ctx.on('agent/pre-step', async (payload, next) => {
+        try {
+            const pruner = config.pruner;
+            if (!config.enabled || !pruner || pruner.mode === 'off')
+                return next();
+            const shape = describeMessages(payload?.messages ?? [], pruner.keepTurns);
+            const stats = governanceStats(service);
+            stats.pruneSteps = (stats.pruneSteps ?? 0) + 1;
+            stats.pruneReclaimable = (stats.pruneReclaimable ?? 0) + shape.reclaimable;
+            stats.lastShape = shape;
+            if (shape.reclaimable > 0) {
+                audit(service, config, {
+                    profile: config.profile,
+                    tool: 'agent/pre-step',
+                    action: 'return',
+                    paramsHash: String(payload?.turn ?? ''),
+                    result: 'SUCCESS',
+                    durationMs: 0,
+                    error: `prune:shadow:${shape.reclaimable}B`,
+                });
+            }
+            return next();
         }
         catch {
             return next();

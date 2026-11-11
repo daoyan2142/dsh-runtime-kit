@@ -33,6 +33,8 @@ export interface GovernanceConfig {
   truncation: TruncationConfig;
   /** 行投影——默认关闭，按工具限制行数 */
   projection: ProjectionConfig;
+  /** 历史裁剪——只观察不改写 */
+  pruner: PrunerConfig;
   /** 用哪个已注册工作区做沙箱判定 */
   profile: string;
 }
@@ -52,6 +54,7 @@ export const DEFAULT_GOVERNANCE: GovernanceConfig = {
   sandbox: false,
   truncation: { ...DEFAULT_TRUNCATION },
   projection: { mode: 'off', maxLines: {} },
+  pruner: { mode: 'off', keepTurns: 4, maxChars: 2000 },
   profile: 'default',
 };
 
@@ -88,6 +91,7 @@ export function normalizeGovernance(raw: unknown): GovernanceConfig {
     sandbox: input.sandbox === true,
     truncation: normalizeTruncation(input.truncation),
     projection: normalizeProjection(input.projection),
+    pruner: normalizePruner(input.pruner),
     profile: typeof input.profile === 'string' && input.profile ? input.profile : DEFAULT_GOVERNANCE.profile,
   };
 }
@@ -381,6 +385,96 @@ export function projectLines(text: string, maxLines: number): { text: string; sh
     shown: maxLines,
     total: lines.length,
   };
+}
+
+
+// ============================================================================
+// 历史裁剪（pruner）观察
+// ============================================================================
+
+export interface PrunerConfig {
+  /**
+   * off 不观察；shadow 只统计不改写。
+   * `on` 暂不提供：消息结构要先观察一轮，盲改会破坏 tool-call/result 配对。
+   */
+  mode: 'off' | 'shadow';
+  /** 最近多少轮保持原样 */
+  keepTurns: number;
+  /** 更早的工具返回如果超过这个字符数，就算"可节省" */
+  maxChars: number;
+}
+
+export const DEFAULT_PRUNER: PrunerConfig = { mode: 'off', keepTurns: 4, maxChars: 2000 };
+
+export function normalizePruner(raw: unknown): PrunerConfig {
+  const input = (raw ?? {}) as Partial<PrunerConfig>;
+  const keepTurns = Number(input.keepTurns);
+  const maxChars = Number(input.maxChars);
+  return {
+    mode: input.mode === 'shadow' ? 'shadow' : 'off',
+    keepTurns: Number.isFinite(keepTurns) && keepTurns >= 0 ? Math.floor(keepTurns) : DEFAULT_PRUNER.keepTurns,
+    maxChars: Number.isFinite(maxChars) && maxChars >= 256 ? Math.floor(maxChars) : DEFAULT_PRUNER.maxChars,
+  };
+}
+
+export interface MessageShape {
+  messages: number;
+  roles: Record<string, number>;
+  blockTypes: Record<string, number>;
+  chars: number;
+  /** 若只保留最近 keepTurns 轮，能省掉的字符数（保守估计） */
+  reclaimable: number;
+}
+
+function textLength(value: unknown): number {
+  if (typeof value === 'string') return value.length;
+  if (Array.isArray(value)) return value.reduce((sum, item) => sum + textLength(item), 0);
+  if (value && typeof value === 'object') {
+    let sum = 0;
+    for (const item of Object.values(value as Record<string, unknown>)) sum += textLength(item);
+    return sum;
+  }
+  return 0;
+}
+
+/**
+ * 只读地描述一次请求要发送的消息。
+ *
+ * 不假设任何具体字段名：把对象里的字符串都算进去，把 `content` 数组里每个块的
+ * `type` 记下来。这样即使结构和我预期不同，观察结果仍然是事实。
+ */
+export function describeMessages(messages: unknown[], keepTurns: number): MessageShape {
+  const roles: Record<string, number> = {};
+  const blockTypes: Record<string, number> = {};
+  let chars = 0;
+
+  const list = Array.isArray(messages) ? messages : [];
+  for (const message of list) {
+    if (!message || typeof message !== 'object') continue;
+    const record = message as Record<string, unknown>;
+    const role = typeof record.role === 'string' ? record.role : 'unknown';
+    roles[role] = (roles[role] ?? 0) + 1;
+    chars += textLength(record);
+    const content = record.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const type = (block as Record<string, unknown>).type;
+        const key = typeof type === 'string' ? type : 'untyped';
+        blockTypes[key] = (blockTypes[key] ?? 0) + 1;
+      }
+    }
+  }
+
+  // 保守估计：前 (总条数 - keepTurns) 条里，超过 maxChars 的部分才算可回收
+  const older = Math.max(0, list.length - Math.max(0, keepTurns));
+  let reclaimable = 0;
+  for (let i = 0; i < older; i++) {
+    const size = textLength(list[i]);
+    if (size > 0) reclaimable += size;
+  }
+
+  return { messages: list.length, roles, blockTypes, chars, reclaimable };
 }
 
 // ============================================================================

@@ -16,22 +16,22 @@
         "fieldsProjection": {
           "type": "boolean",
           "default": true,
-          "description": "启用字段投影"
+          "description": "启用字段投影（仅作用于本插件自己的快路径/PTC）"
         },
         "prunerEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "启用长会话 pruner"
+          "description": "宿主负责：dsh-compaction-basic / tool-result-pruner 已实现，本字段不生效"
         },
         "compactionEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "启用 compaction"
+          "description": "宿主负责：宿主已有 compaction，本字段不生效"
         },
         "lazyLoadTools": {
           "type": "boolean",
           "default": true,
-          "description": "工具 schema 按需加载（对标 ToolSearch/Defer）"
+          "description": "宿主负责：deferLoading 属内核能力，本字段不生效"
         }
       },
       "additionalProperties": false
@@ -273,6 +273,15 @@
           "type": "boolean",
           "default": false,
           "description": "启用调用前拦截（文件/命令/网络/工具启停）；开启后会真的拒绝调用"
+        },
+        "pruner": {
+          "type": "object",
+          "properties": {
+            "mode": { "type": "string", "enum": ["off", "shadow"], "default": "off", "description": "历史裁剪：目前只提供观察模式，不改写消息" },
+            "keepTurns": { "type": "integer", "minimum": 0, "maximum": 100, "default": 4, "description": "最近多少轮保持原样" },
+            "maxChars": { "type": "integer", "minimum": 256, "default": 2000, "description": "更早的工具返回超过这个长度才算可回收" }
+          },
+          "additionalProperties": false
         },
         "projection": {
           "type": "object",

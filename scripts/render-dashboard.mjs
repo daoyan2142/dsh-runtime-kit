@@ -49,6 +49,7 @@ const state = {
       { stamp: '2026-11-11T04-20-00-000Z', file: 'D_Dsh_notes_todo.md', original: 'D:\\Dsh\\notes\\todo.md', bytes: 2048, at: '2026-11-11T04:20:00.000Z' },
     ],
   },
+  prune: { mode: 'shadow', steps: 12, reclaimable: 88064, shape: { messages: 18, roles: { user: 9, assistant: 5, tool: 4 }, blockTypes: { text: 14, 'tool-call': 4, 'tool-result': 4 }, chars: 132000, reclaimable: 88064 } },
   truncation: { calls: 37, truncated: 9, savedBytes: 184320, spillFiles: 9, lastAt: '2026-11-11T03:02:00.000Z' },
   sandbox: {
     mode: 'workspace-write',

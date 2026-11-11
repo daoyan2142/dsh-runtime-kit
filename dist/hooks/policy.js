@@ -19,6 +19,7 @@ export const DEFAULT_GOVERNANCE = {
     sandbox: false,
     truncation: { ...DEFAULT_TRUNCATION },
     projection: { mode: 'off', maxLines: {} },
+    pruner: { mode: 'off', keepTurns: 4, maxChars: 2000 },
     profile: 'default',
 };
 function normalizeTruncation(raw) {
@@ -53,6 +54,7 @@ export function normalizeGovernance(raw) {
         sandbox: input.sandbox === true,
         truncation: normalizeTruncation(input.truncation),
         projection: normalizeProjection(input.projection),
+        pruner: normalizePruner(input.pruner),
         profile: typeof input.profile === 'string' && input.profile ? input.profile : DEFAULT_GOVERNANCE.profile,
     };
 }
@@ -284,6 +286,69 @@ export function projectLines(text, maxLines) {
         shown: maxLines,
         total: lines.length,
     };
+}
+export const DEFAULT_PRUNER = { mode: 'off', keepTurns: 4, maxChars: 2000 };
+export function normalizePruner(raw) {
+    const input = (raw ?? {});
+    const keepTurns = Number(input.keepTurns);
+    const maxChars = Number(input.maxChars);
+    return {
+        mode: input.mode === 'shadow' ? 'shadow' : 'off',
+        keepTurns: Number.isFinite(keepTurns) && keepTurns >= 0 ? Math.floor(keepTurns) : DEFAULT_PRUNER.keepTurns,
+        maxChars: Number.isFinite(maxChars) && maxChars >= 256 ? Math.floor(maxChars) : DEFAULT_PRUNER.maxChars,
+    };
+}
+function textLength(value) {
+    if (typeof value === 'string')
+        return value.length;
+    if (Array.isArray(value))
+        return value.reduce((sum, item) => sum + textLength(item), 0);
+    if (value && typeof value === 'object') {
+        let sum = 0;
+        for (const item of Object.values(value))
+            sum += textLength(item);
+        return sum;
+    }
+    return 0;
+}
+/**
+ * 只读地描述一次请求要发送的消息。
+ *
+ * 不假设任何具体字段名：把对象里的字符串都算进去，把 `content` 数组里每个块的
+ * `type` 记下来。这样即使结构和我预期不同，观察结果仍然是事实。
+ */
+export function describeMessages(messages, keepTurns) {
+    const roles = {};
+    const blockTypes = {};
+    let chars = 0;
+    const list = Array.isArray(messages) ? messages : [];
+    for (const message of list) {
+        if (!message || typeof message !== 'object')
+            continue;
+        const record = message;
+        const role = typeof record.role === 'string' ? record.role : 'unknown';
+        roles[role] = (roles[role] ?? 0) + 1;
+        chars += textLength(record);
+        const content = record.content;
+        if (Array.isArray(content)) {
+            for (const block of content) {
+                if (!block || typeof block !== 'object')
+                    continue;
+                const type = block.type;
+                const key = typeof type === 'string' ? type : 'untyped';
+                blockTypes[key] = (blockTypes[key] ?? 0) + 1;
+            }
+        }
+    }
+    // 保守估计：前 (总条数 - keepTurns) 条里，超过 maxChars 的部分才算可回收
+    const older = Math.max(0, list.length - Math.max(0, keepTurns));
+    let reclaimable = 0;
+    for (let i = 0; i < older; i++) {
+        const size = textLength(list[i]);
+        if (size > 0)
+            reclaimable += size;
+    }
+    return { messages: list.length, roles, blockTypes, chars, reclaimable };
 }
 /** 按 `a.b[].c` 取值，返回其中所有字符串。 */
 export function readPathSpec(source, spec) {

@@ -158,6 +158,18 @@ window.__ModuleLoader__.load({
       return `${(n / 1024 / 1024).toFixed(1)} MB`
     }
 
+    function describeShape(shape) {
+      if (!shape || typeof shape !== 'object') return L('尚无', 'none')
+      const roles = Object.entries(shape.roles || {})
+        .map(([role, count]) => role + '×' + count)
+        .join(' ')
+      const blocks = Object.entries(shape.blockTypes || {})
+        .map(([type, count]) => type + '×' + count)
+        .slice(0, 4)
+        .join(' ')
+      return (roles || L('无消息', 'no messages')) + (blocks ? ' · ' + blocks : '')
+    }
+
     function stamp(iso) {
       const d = new Date(iso)
       if (Number.isNaN(d.getTime())) return String(iso || '')
@@ -293,6 +305,7 @@ window.__ModuleLoader__.load({
       const observed = state?.observed || {}
       const truncation = governance?.truncation || { mode: 'off', maxBytes: 4096, spill: true, perTool: {} }
       const projection = governance?.projection || { mode: 'off', maxLines: {} }
+      const pruner = governance?.pruner || { mode: 'off', keepTurns: 4, maxChars: 2000 }
       const truncStats = state?.truncation || {}
 
       return h(
@@ -734,6 +747,51 @@ window.__ModuleLoader__.load({
                 setGovernance({ ...governance, truncation: { ...truncation, maxBytes: Number(e.target.value) || 0 } }),
             }),
           ),
+          h(
+            'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('历史裁剪（观察）', 'History pruning (observe)')),
+              h(
+                'div',
+                { className: 'rk-row-d' },
+                L(
+                  '只统计「最早几轮能省多少」，不改写消息；写入模式等结构确认后再开',
+                  'Measures what the oldest turns cost; never rewrites messages yet',
+                ),
+              ),
+            ),
+            h(
+              'div',
+              { className: 'rk-seg' },
+              ...[
+                ['off', L('关', 'off')],
+                ['shadow', L('观察', 'observe')],
+              ].map(([value, label]) =>
+                h(
+                  'button',
+                  {
+                    key: value,
+                    className: (pruner.mode || 'off') === value ? 'on' : '',
+                    onClick: () => setGovernance({ ...governance, pruner: { ...pruner, mode: value } }),
+                  },
+                  label,
+                ),
+              ),
+            ),
+          ),
+          (state?.prune?.steps || 0) > 0
+            ? h(
+                'div',
+                { className: 'rk-sub' },
+                L(
+                  '已观察 ' + state.prune.steps + ' 步 · 可回收 ' + fmtBytes(state.prune.reclaimable) + ' · 最近一次结构：' + describeShape(state.prune.shape),
+                  'observed ' + state.prune.steps + ' steps · reclaimable ' + fmtBytes(state.prune.reclaimable) + ' · last shape: ' + describeShape(state.prune.shape),
+                ),
+              )
+            : null,
           truncStats.calls
             ? h(
                 'div',
@@ -759,16 +817,8 @@ window.__ModuleLoader__.load({
               label: L('字段投影', 'Field projection'),
               value: context.fieldsProjection ? L('开', 'on') : L('关', 'off'),
             }),
-            h(Stat, {
-              label: L('pruner / compaction', 'pruner / compaction'),
-              value: `${context.prunerEnabled ? L('开', 'on') : L('关', 'off')} / ${
-                context.compactionEnabled ? L('开', 'on') : L('关', 'off')
-              }`,
-            }),
-            h(Stat, {
-              label: L('延迟工具加载', 'Lazy tool loading'),
-              value: context.lazyLoadTools ? L('开', 'on') : L('关', 'off'),
-            }),
+            h(Stat, { label: L('pruner / compaction', 'pruner / compaction'), value: L('宿主负责', 'host') }),
+            h(Stat, { label: L('延迟工具加载', 'Lazy tool loading'), value: L('宿主负责', 'host') }),
           ),
           h(
             'div',

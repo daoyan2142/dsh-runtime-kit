@@ -41,6 +41,10 @@
           shell: pwsh
           workspaceTrust: true
           toolControl: {}
+        pruner:
+          mode: off
+          keepTurns: 4
+          maxChars: 2000
         projection:
           mode: off
           maxLines: {}
