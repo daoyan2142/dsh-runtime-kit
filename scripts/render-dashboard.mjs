@@ -36,6 +36,13 @@ const client = captured.factory((name) => {
 const state = {
   health: { status: 'healthy', version: '0.3.1', dshVersion: '0.1.0', checks: {} },
   governance: { enabled: true, audit: true, redaction: true, injection: 'annotate', sandbox: false, profile: 'default', truncation: { mode: 'shadow', maxBytes: 4096, spill: true, perTool: {} } },
+  auditToday: [
+    { timestamp: '2026-11-11T06:14:03.000Z', tool: 'read', action: 'return', result: 'SUCCESS', error: '' },
+    { timestamp: '2026-11-11T06:14:07.000Z', tool: 'pwsh', action: 'return', result: 'SUCCESS', error: 'redacted:npm-token' },
+    { timestamp: '2026-11-11T06:14:11.000Z', tool: 'web_fetch', action: 'return', result: 'BLOCKED', error: 'injection:ignore-previous' },
+    { timestamp: '2026-11-11T06:14:18.000Z', tool: 'write', action: 'block', result: 'BLOCKED', error: 'sandbox:file:write' },
+  ],
+  auditOlder: 118,
   observed: { total: 42, blocked: 3, asked: 1, redacted: 2, truncated: 4, trashed: 6, top: [{ name: 'read', count: 14 }, { name: 'pwsh', count: 11 }, { name: 'grep', count: 7 }, { name: 'write', count: 5 }] },
   trash: {
     files: 6,

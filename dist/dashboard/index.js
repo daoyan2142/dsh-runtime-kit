@@ -140,6 +140,11 @@ async function buildState(service) {
         service.healthCheck().catch((error) => ({ status: 'unhealthy', error: String(error?.message ?? error) })),
         service.getAuditLogs({ limit: 200 }).catch(() => []),
     ]);
+    const today = new Date().toDateString();
+    const auditToday = auditAll.filter((entry) => {
+        const at = new Date(entry?.timestamp ?? 0);
+        return !Number.isNaN(at.getTime()) && at.toDateString() === today;
+    });
     const audit = auditAll.slice(-20);
     const observed = metricsFromAudit(auditAll);
     const usage = await trashUsage(config.stateDir).catch(() => ({ dir: null, files: 0, bytes: 0, stamps: 0 }));
@@ -152,6 +157,8 @@ async function buildState(service) {
         context: config.context ?? {},
         loop: config.loop ?? {},
         audit,
+        auditToday,
+        auditOlder: Math.max(0, auditAll.length - auditToday.length),
         observed,
         trash: {
             ...usage,

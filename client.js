@@ -190,6 +190,7 @@ window.__ModuleLoader__.load({
       )
       const [wsNew, setWsNew] = useState({ profile: 'default', root: '', mode: 'workspace-write' })
       const [armed, setArmed] = useState('')
+      const [auditAll, setAuditAll] = useState(false)
       const [busy, setBusy] = useState('')
       const [note, setNote] = useState('')
       const [error, setError] = useState('')
@@ -303,6 +304,12 @@ window.__ModuleLoader__.load({
       const context = state?.context || {}
       const metrics = state?.metrics || []
       const observed = state?.observed || {}
+      const todayEntries = Array.isArray(state?.auditToday)
+        ? state.auditToday
+        : (audit || []).filter((entry) => {
+            const at = new Date(entry?.timestamp ?? 0)
+            return !Number.isNaN(at.getTime()) && at.toDateString() === new Date().toDateString()
+          })
       const truncation = governance?.truncation || { mode: 'off', maxBytes: 4096, spill: true, perTool: {} }
       const projection = governance?.projection || { mode: 'off', maxLines: {} }
       const pruner = governance?.pruner || { mode: 'off', keepTurns: 4, maxChars: 2000 }
@@ -650,7 +657,14 @@ window.__ModuleLoader__.load({
         ),
         h(
           Card,
-          { title: L('上下文治理', 'Context governance') },
+          {
+            title: L('上下文治理', 'Context governance'),
+            right: h(
+              'button',
+              { className: 'rk-btn primary', onClick: save, disabled: !dirty || Boolean(busy) },
+              busy === 'save' ? L('保存中', 'Saving') : L('保存', 'Save'),
+            ),
+          },
           h(
             'div',
             { className: 'rk-row' },
@@ -927,60 +941,78 @@ window.__ModuleLoader__.load({
 
         h(
           Card,
-          { title: L('审计流水', 'Audit log') },
-          audit.length
+          {
+            title: L('审计流水', 'Audit log'),
+            right: h(
+              'div',
+              { className: 'rk-wrap' },
+              h('span', { className: 'rk-mono' }, `今天 ${todayEntries.length}`),
+              h(
+                'button',
+                { className: 'rk-btn', onClick: () => setAuditAll((value) => !value) },
+                auditAll ? L('只看今天', 'Today only') : L('展开今天的全部', 'Show all today'),
+              ),
+            ),
+          },
+          todayEntries.length
             ? h(
                 'div',
                 { className: 'rk-scroll' },
                 h(
-                'table',
-                { className: 'rk-table' },
-                h(
-                  'thead',
-                  null,
+                  'table',
+                  { className: 'rk-table' },
                   h(
-                    'tr',
+                    'thead',
                     null,
-                    h('th', null, L('时间', 'Time')),
-                    h('th', null, L('工具', 'Tool')),
-                    h('th', null, L('动作', 'Action')),
-                    h('th', null, L('结果', 'Result')),
-                    h('th', null, L('备注', 'Note')),
+                    h(
+                      'tr',
+                      null,
+                      h('th', null, L('时间', 'Time')),
+                      h('th', null, L('工具', 'Tool')),
+                      h('th', null, L('结果', 'Result')),
+                      h('th', null, L('备注', 'Note')),
+                    ),
+                  ),
+                  h(
+                    'tbody',
+                    null,
+                    (auditAll ? todayEntries : todayEntries.slice(-8))
+                      .slice()
+                      .reverse()
+                      .map((entry, i) =>
+                        h(
+                          'tr',
+                          { key: `${entry.timestamp}-${i}` },
+                          h('td', { className: 'rk-mono' }, stamp(entry.timestamp)),
+                          h('td', { className: 'rk-mono' }, entry.tool + (entry.action === 'block' ? ' ⛔' : '')),
+                          h(
+                            'td',
+                            null,
+                            h(
+                              'span',
+                              {
+                                className: `rk-badge ${
+                                  entry.result === 'SUCCESS' ? 'ok' : entry.result === 'ASKED' ? 'warn' : 'bad'
+                                }`,
+                              },
+                              entry.result,
+                            ),
+                          ),
+                          h('td', { className: 'rk-mono', title: entry.error || '' }, entry.error || ''),
+                        ),
+                      ),
                   ),
                 ),
-                h(
-                  'tbody',
-                  null,
-                  audit
-                    .slice(-20)
-                    .reverse()
-                    .map((entry, i) =>
-                      h(
-                        'tr',
-                        { key: `${entry.timestamp}-${i}` },
-                        h('td', { className: 'rk-mono' }, stamp(entry.timestamp)),
-                        h('td', { className: 'rk-mono' }, entry.tool),
-                        h('td', null, entry.action),
-                        h(
-                          'td',
-                          null,
-                          h(
-                            'span',
-                            {
-                              className: `rk-badge ${
-                                entry.result === 'SUCCESS' ? 'ok' : entry.result === 'ASKED' ? 'warn' : 'bad'
-                              }`,
-                            },
-                            entry.result,
-                          ),
-                        ),
-                        h('td', { className: 'rk-mono', title: entry.error || '' }, entry.error || ''),
-                      ),
-                    ),
-                ),
-                ),
               )
-            : h('div', { className: 'rk-empty' }, L('还没有调用记录。', 'No calls recorded yet.')),
+            : h('div', { className: 'rk-empty' }, L('今天还没有调用记录。', 'No calls today.')),
+          h(
+            'div',
+            { className: 'rk-sub' },
+            L(
+              '只显示今天的记录（默认最近 8 条）；更早的 ' + (state?.auditOlder || 0) + ' 条不展开，需要时去日志文件里看',
+              'Today only (8 by default); ' + (state?.auditOlder || 0) + ' older entries are not listed — read the log file when needed',
+            ),
+          ),
         ),
 
         h(
