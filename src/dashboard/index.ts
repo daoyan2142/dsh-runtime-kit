@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { normalizeGovernance } from '../hooks/policy.js';
 import { governanceStats } from '../hooks/index.js';
 import { normalizeWorkspaces, registerWorkspaces, verifyIsolation } from '../workspaces/index.js';
-import { pruneTrash, trashUsage } from '../guard/index.js';
+import { listTrash, pruneTrash, restoreTrash, trashUsage } from '../guard/index.js';
 
 const API_PREFIX = '/runtime-kit/api/';
 const ALLOWED_KEYS = ['enabled', 'audit', 'redaction', 'injection', 'sandbox', 'truncation', 'profile'] as const;
@@ -177,7 +177,12 @@ async function buildState(service: DashboardService) {
     loop: config.loop ?? {},
     audit,
     observed,
-    trash: { ...usage, retentionDays: config.sandbox?.trashRetentionDays ?? 7, maxMB: config.sandbox?.trashMaxMB ?? 256 },
+    trash: {
+      ...usage,
+      retentionDays: config.sandbox?.trashRetentionDays ?? 7,
+      maxMB: config.sandbox?.trashMaxMB ?? 256,
+      recent: await listTrash(config.stateDir, 6).catch(() => []),
+    },
     truncation: governanceStats(service),
     registry: {
       tools: (service.registry?.listTools?.() ?? []).map((tool: any) => tool.name),
@@ -231,11 +236,18 @@ async function handle(service: DashboardService, method: string, body: any) {
       await saveSandbox(service, { workspaces, commandDefault, networkDefault });
       return { sandbox: sandboxSummary(service.getConfig?.() ?? {}) };
     }
+    case 'trash/restore': {
+      const current = service.getConfig?.() ?? {};
+      const result = await restoreTrash(current.stateDir, String(body?.stamp ?? ''), String(body?.file ?? ''), {
+        overwrite: body?.overwrite === true,
+      });
+      return { result, trash: { ...(await trashUsage(current.stateDir)), recent: await listTrash(current.stateDir, 6) } };
+    }
     case 'trash/clear': {
       const current = service.getConfig?.() ?? {};
       const usage = await trashUsage(current.stateDir);
       if (usage.dir) await rm(usage.dir, { recursive: true, force: true });
-      return { trash: await trashUsage(current.stateDir) };
+      return { trash: { ...(await trashUsage(current.stateDir)), recent: [] } };
     }
     default:
       return null;

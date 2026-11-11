@@ -125,6 +125,13 @@ function audit(service, config, entry) {
  */
 export function installGovernance(ctx, service, raw) {
     const config = normalizeGovernance(raw);
+    // 审计保留：cleanup 之前没有任何调用点，retentionDays 形同虚设。
+    try {
+        void service.audit?.cleanup?.().catch?.(() => { });
+    }
+    catch {
+        /* 清理失败不影响启动 */
+    }
     // 工作区必须在这里注册：apply 一定会走到 installGovernance，而页面不一定存在。
     try {
         installWorkspaces(service);

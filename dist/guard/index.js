@@ -11,8 +11,8 @@
 //   - a failure here is ignored by the caller (fail-open)
 //   - the copy keeps the original extension so it can be opened as-is
 // ============================================================================
-import { copyFile, mkdir, readdir, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 /** 文件名冲突时用的短哈希（只依赖字符串，避免引入 crypto）。 */
 function shortName(value) {
@@ -62,7 +62,9 @@ export async function snapshotPaths(paths, options) {
         }
         try {
             await mkdir(dir, { recursive: true });
-            await copyFile(abs, join(dir, flattenPath(abs)));
+            const name = flattenPath(abs);
+            await copyFile(abs, join(dir, name));
+            await recordIndex(dir, { file: name, original: abs, bytes: info.size, at: new Date().toISOString() });
             saved += 1;
         }
         catch {
@@ -94,7 +96,7 @@ export async function trashUsage(stateDir) {
             continue;
         }
         for (const entry of listed) {
-            if (!entry.isFile())
+            if (!entry.isFile() || entry.name === INDEX_NAME)
                 continue;
             files += 1;
             try {
@@ -186,7 +188,7 @@ async function trashUsageOf(dir) {
         return { files, bytes };
     }
     for (const entry of listed) {
-        if (!entry.isFile())
+        if (!entry.isFile() || entry.name === INDEX_NAME)
             continue;
         files += 1;
         try {
@@ -197,6 +199,90 @@ async function trashUsageOf(dir) {
         }
     }
     return { files, bytes };
+}
+/** 每个时间戳目录一份索引，记录副本来自哪个原路径——恢复靠它。 */
+const INDEX_NAME = '.index.json';
+async function readIndex(dir) {
+    try {
+        const raw = JSON.parse(await readFile(join(dir, INDEX_NAME), 'utf8'));
+        return Array.isArray(raw?.entries) ? raw.entries : [];
+    }
+    catch {
+        return [];
+    }
+}
+async function recordIndex(dir, entry) {
+    try {
+        const entries = await readIndex(dir);
+        const next = entries.filter((item) => item.file !== entry.file);
+        next.push(entry);
+        await writeFile(join(dir, INDEX_NAME), JSON.stringify({ entries: next }, null, 2), 'utf8');
+    }
+    catch {
+        /* 索引失败不影响副本本身 */
+    }
+}
+/** 最近的副本（新的在前）。旧版本留下的目录没有索引，会被跳过。 */
+export async function listTrash(stateDir, limit = 20) {
+    const dir = stateDir ? join(stateDir, 'trash') : undefined;
+    if (!dir)
+        return [];
+    let stamps = [];
+    try {
+        stamps = (await readdir(dir)).sort().reverse();
+    }
+    catch {
+        return [];
+    }
+    const out = [];
+    for (const stamp of stamps) {
+        const entries = await readIndex(join(dir, stamp));
+        for (const entry of entries) {
+            out.push({ ...entry, stamp, path: join(dir, stamp, entry.file) });
+            if (out.length >= limit)
+                return out;
+        }
+    }
+    return out;
+}
+/**
+ * 把一份副本放回原路径。
+ *
+ * 默认不覆盖：目标已存在就返回 conflict，由调用方决定是否再来一次。
+ * 直接覆盖会把"现在的版本"冲掉，那正是这个功能要防的事。
+ */
+export async function restoreTrash(stateDir, stamp, file, options = {}) {
+    if (!stateDir)
+        return { status: 'missing' };
+    const dir = join(stateDir, 'trash', stamp);
+    const entries = await readIndex(dir);
+    const entry = entries.find((item) => item.file === file);
+    if (!entry)
+        return { status: 'missing' };
+    const source = join(dir, entry.file);
+    try {
+        await stat(source);
+    }
+    catch {
+        return { status: 'missing' };
+    }
+    if (!options.overwrite) {
+        try {
+            await stat(entry.original);
+            return { status: 'conflict', target: entry.original };
+        }
+        catch {
+            /* 不存在：可以直接恢复 */
+        }
+    }
+    try {
+        await mkdir(dirname(entry.original), { recursive: true });
+        await copyFile(source, entry.original);
+        return { status: 'restored', target: entry.original };
+    }
+    catch {
+        return { status: 'missing', target: entry.original };
+    }
 }
 /** 一次调用的时间戳目录名。 */
 export function trashStamp(now = new Date()) {

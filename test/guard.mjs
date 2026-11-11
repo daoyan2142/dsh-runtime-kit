@@ -7,7 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 
-const { snapshotPaths, trashStamp, flattenPath, trashUsage, pruneTrash } = await import(
+const { snapshotPaths, trashStamp, flattenPath, trashUsage, pruneTrash, listTrash, restoreTrash } = await import(
   new URL('../dist/guard/index.js', import.meta.url).href
 );
 
@@ -79,6 +79,33 @@ check('没东西可删时返回 0', cleared.removed === 0 || cleared.removed > 0
 console.log('\n[4] 命名与时间戳');
 check('扁平化保留扩展名', flattenPath('C:\\work\\a.txt') === 'C_work_a.txt', flattenPath('C:\\work\\a.txt'));
 check('时间戳可直接做目录名', /^[0-9T-]+Z$/.test(trashStamp()), trashStamp());
+
+
+console.log('\n[5] 索引与恢复');
+const stateDir2 = path.join(tmp, 'state2');
+const work2 = path.join(tmp, 'work2');
+await fs.mkdir(work2, { recursive: true });
+const restoreMe = path.join(work2, 'restore-me.txt');
+await fs.writeFile(restoreMe, 'original content', 'utf8');
+
+await snapshotPaths([restoreMe], { stateDir: stateDir2, enabled: true, stamp: 's-restore' });
+const listed = await listTrash(stateDir2, 10);
+check('索引记录了原路径', listed.length === 1 && listed[0].original === restoreMe, JSON.stringify(listed[0] || {}));
+
+await fs.writeFile(restoreMe, 'changed later', 'utf8');
+const conflict = await restoreTrash(stateDir2, 's-restore', listed[0].file);
+check('目标已存在时返回 conflict', conflict.status === 'conflict', JSON.stringify(conflict));
+check('冲突时不动原文件', (await fs.readFile(restoreMe, 'utf8')) === 'changed later');
+
+const overwritten = await restoreTrash(stateDir2, 's-restore', listed[0].file, { overwrite: true });
+check('显式覆盖后恢复成功', overwritten.status === 'restored');
+check('内容回到快照时的版本', (await fs.readFile(restoreMe, 'utf8')) === 'original content');
+
+await fs.rm(restoreMe, { force: true });
+const back = await restoreTrash(stateDir2, 's-restore', listed[0].file);
+check('目标不存在时直接恢复', back.status === 'restored');
+const missing = await restoreTrash(stateDir2, 's-restore', 'no-such-file.txt');
+check('找不到副本时返回 missing', missing.status === 'missing');
 
 console.log(`\n========== 结果: ${pass} 通过, ${fail} 失败 ==========`);
 await fs.rm(tmp, { recursive: true, force: true });

@@ -177,6 +177,7 @@ window.__ModuleLoader__.load({
         initial ? { workspaces: initial.sandbox?.workspaces || [], commandDefault: initial.sandbox?.commandDefault || 'allow', networkDefault: initial.sandbox?.networkDefault || 'deny' } : null,
       )
       const [wsNew, setWsNew] = useState({ profile: 'default', root: '', mode: 'workspace-write' })
+      const [armed, setArmed] = useState('')
       const [busy, setBusy] = useState('')
       const [note, setNote] = useState('')
       const [error, setError] = useState('')
@@ -238,6 +239,31 @@ window.__ModuleLoader__.load({
               networkDefault: state.sandbox?.networkDefault || 'deny',
             }),
       )
+
+      const restore = async (entry) => {
+        const key = entry.stamp + '/' + entry.file
+        setError('')
+        try {
+          const result = await call('trash/restore', {
+            stamp: entry.stamp,
+            file: entry.file,
+            overwrite: armed === key,
+          })
+          const status = result?.result?.status
+          if (status === 'restored') {
+            setArmed('')
+            setNote(L('已恢复：', 'Restored: ') + result.result.target)
+            await load()
+          } else if (status === 'conflict') {
+            setArmed(key)
+            setNote(L('原路径还在，再点一次覆盖：', 'Target exists — click again to overwrite: ') + result.result.target)
+          } else {
+            setNote(L('副本已不存在。', 'That copy is gone.'))
+          }
+        } catch (e) {
+          setError(String(e.message || e))
+        }
+      }
 
       const saveSandbox = async () => {
         setBusy('sandbox')
@@ -579,6 +605,29 @@ window.__ModuleLoader__.load({
               L('清空', 'Clear'),
             ),
           ),
+          (state?.trash?.recent || []).length
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column' } },
+                ...(state.trash.recent || []).map((entry) =>
+                  h(
+                    'div',
+                    { key: entry.stamp + '/' + entry.file, className: 'rk-row' },
+                    h(
+                      'div',
+                      { className: 'rk-row-main' },
+                      h('div', { className: 'rk-row-t' }, entry.original),
+                      h('div', { className: 'rk-row-d' }, stamp(entry.at) + ' · ' + fmtBytes(entry.bytes)),
+                    ),
+                    h(
+                      'button',
+                      { className: 'rk-btn', onClick: () => restore(entry) },
+                      armed === entry.stamp + '/' + entry.file ? L('确认覆盖', 'Confirm overwrite') : L('恢复', 'Restore'),
+                    ),
+                  ),
+                ),
+              )
+            : null,
           h(
             'div',
             { className: 'rk-sub' },

@@ -205,6 +205,12 @@ function audit(service: HookService, config: GovernanceConfig, entry: Parameters
  */
 export function installGovernance(ctx: { on?: (name: string, listener: (...args: any[]) => any) => unknown }, service: HookService, raw: unknown): GovernanceConfig {
   const config = normalizeGovernance(raw);
+  // 审计保留：cleanup 之前没有任何调用点，retentionDays 形同虚设。
+  try {
+    void (service as any).audit?.cleanup?.().catch?.(() => {});
+  } catch {
+    /* 清理失败不影响启动 */
+  }
   // 工作区必须在这里注册：apply 一定会走到 installGovernance，而页面不一定存在。
   try {
     installWorkspaces(service as any);

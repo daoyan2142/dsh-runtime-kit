@@ -12,8 +12,8 @@
 //   - the copy keeps the original extension so it can be opened as-is
 // ============================================================================
 
-import { copyFile, mkdir, readdir, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 export interface TrashOptions {
   stateDir?: string;
@@ -82,7 +82,9 @@ export async function snapshotPaths(paths: string[], options: TrashOptions): Pro
 
     try {
       await mkdir(dir, { recursive: true });
-      await copyFile(abs, join(dir, flattenPath(abs)));
+      const name = flattenPath(abs);
+      await copyFile(abs, join(dir, name));
+      await recordIndex(dir, { file: name, original: abs, bytes: info.size, at: new Date().toISOString() });
       saved += 1;
     } catch {
       skipped += 1; // 权限/占用：不阻断调用
@@ -120,7 +122,7 @@ export async function trashUsage(stateDir?: string): Promise<TrashUsage> {
       continue;
     }
     for (const entry of listed) {
-      if (!entry.isFile()) continue;
+      if (!entry.isFile() || entry.name === INDEX_NAME) continue;
       files += 1;
       try {
         bytes += (await stat(join(entry.parentPath ?? entry.path, entry.name))).size;
@@ -222,7 +224,7 @@ async function trashUsageOf(dir: string): Promise<{ files: number; bytes: number
     return { files, bytes };
   }
   for (const entry of listed) {
-    if (!entry.isFile()) continue;
+    if (!entry.isFile() || entry.name === INDEX_NAME) continue;
     files += 1;
     try {
       bytes += (await stat(join(entry.parentPath ?? entry.path, entry.name))).size;
@@ -231,6 +233,112 @@ async function trashUsageOf(dir: string): Promise<{ files: number; bytes: number
     }
   }
   return { files, bytes };
+}
+
+
+interface TrashIndexEntry {
+  file: string;
+  original: string;
+  bytes: number;
+  at: string;
+}
+
+/** 每个时间戳目录一份索引，记录副本来自哪个原路径——恢复靠它。 */
+const INDEX_NAME = '.index.json';
+
+async function readIndex(dir: string): Promise<TrashIndexEntry[]> {
+  try {
+    const raw = JSON.parse(await readFile(join(dir, INDEX_NAME), 'utf8'));
+    return Array.isArray(raw?.entries) ? raw.entries : [];
+  } catch {
+    return [];
+  }
+}
+
+async function recordIndex(dir: string, entry: TrashIndexEntry): Promise<void> {
+  try {
+    const entries = await readIndex(dir);
+    const next = entries.filter((item) => item.file !== entry.file);
+    next.push(entry);
+    await writeFile(join(dir, INDEX_NAME), JSON.stringify({ entries: next }, null, 2), 'utf8');
+  } catch {
+    /* 索引失败不影响副本本身 */
+  }
+}
+
+export interface TrashEntry extends TrashIndexEntry {
+  stamp: string;
+  path: string;
+}
+
+/** 最近的副本（新的在前）。旧版本留下的目录没有索引，会被跳过。 */
+export async function listTrash(stateDir: string | undefined, limit = 20): Promise<TrashEntry[]> {
+  const dir = stateDir ? join(stateDir, 'trash') : undefined;
+  if (!dir) return [];
+  let stamps: string[] = [];
+  try {
+    stamps = (await readdir(dir)).sort().reverse();
+  } catch {
+    return [];
+  }
+
+  const out: TrashEntry[] = [];
+  for (const stamp of stamps) {
+    const entries = await readIndex(join(dir, stamp));
+    for (const entry of entries) {
+      out.push({ ...entry, stamp, path: join(dir, stamp, entry.file) });
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}
+
+export interface RestoreResult {
+  status: 'restored' | 'conflict' | 'missing';
+  target?: string;
+}
+
+/**
+ * 把一份副本放回原路径。
+ *
+ * 默认不覆盖：目标已存在就返回 conflict，由调用方决定是否再来一次。
+ * 直接覆盖会把"现在的版本"冲掉，那正是这个功能要防的事。
+ */
+export async function restoreTrash(
+  stateDir: string | undefined,
+  stamp: string,
+  file: string,
+  options: { overwrite?: boolean } = {}
+): Promise<RestoreResult> {
+  if (!stateDir) return { status: 'missing' };
+  const dir = join(stateDir, 'trash', stamp);
+  const entries = await readIndex(dir);
+  const entry = entries.find((item) => item.file === file);
+  if (!entry) return { status: 'missing' };
+
+  const source = join(dir, entry.file);
+  try {
+    await stat(source);
+  } catch {
+    return { status: 'missing' };
+  }
+
+  if (!options.overwrite) {
+    try {
+      await stat(entry.original);
+      return { status: 'conflict', target: entry.original };
+    } catch {
+      /* 不存在：可以直接恢复 */
+    }
+  }
+
+  try {
+    await mkdir(dirname(entry.original), { recursive: true });
+    await copyFile(source, entry.original);
+    return { status: 'restored', target: entry.original };
+  } catch {
+    return { status: 'missing', target: entry.original };
+  }
 }
 
 /** 一次调用的时间戳目录名。 */
