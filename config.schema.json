@@ -48,7 +48,7 @@
         "disabledLayers": {
           "type": "array",
           "items": { "type": "string", "enum": ["plan", "todo", "goal", "subagent"] },
-          "default: ["plan", "todo", "goal", "subagent"],
+          "default": ["plan", "todo", "goal", "subagent"],
           "description": "关闭的重编排层"
         },
         "maxParallelToolCalls": {
