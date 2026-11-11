@@ -195,6 +195,43 @@
         }
       },
       "additionalProperties": false
+    },
+    "governance": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "治理钩子总开关；关闭后不注册任何钩子"
+        },
+        "audit": {
+          "type": "boolean",
+          "default": true,
+          "description": "把每次工具调用写入审计流水（只读观察，不改变行为）"
+        },
+        "redaction": {
+          "type": "boolean",
+          "default": true,
+          "description": "把工具返回里的密钥替换为 [redacted:kind]"
+        },
+        "injection": {
+          "type": "string",
+          "enum": ["off", "annotate", "block"],
+          "default": "annotate",
+          "description": "提示注入处理：off 不检测 / annotate 追加警告块 / block 拦截本次返回"
+        },
+        "sandbox": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用调用前拦截（文件/命令/网络/工具启停）；开启后会真的拒绝调用"
+        },
+        "profile": {
+          "type": "string",
+          "default": "default",
+          "description": "沙箱判定使用的工作区 profile"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": ["context", "loop", "sandbox", "audit"],

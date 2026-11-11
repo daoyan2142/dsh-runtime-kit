@@ -12,6 +12,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
+import { installGovernance, DEFAULT_GOVERNANCE } from './hooks/index.js';
 import { spawn } from 'node:child_process';
 
 // ============================================================================
@@ -1118,6 +1119,14 @@ async function apply(ctx, raw = {}) {
 
   const svc = new RuntimeKitServiceImpl(config);
   ctx.provide('runtimeKit', svc);
+
+  // ---- 治理钩子：审计 / 脱敏 / 注入检测 / 沙箱（全部 fail-open） ----
+  config.governance = { ...DEFAULT_GOVERNANCE, ...(raw.governance ?? {}) };
+  try {
+    installGovernance(ctx, svc, config.governance);
+  } catch (error) {
+    ctx.logger?.warn?.(`[runtime-kit] governance hooks failed: ${String(error)}`);
+  }
 
   const registerCommands = (commandCtx) => {
     const commands = commandCtx.commands;

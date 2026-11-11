@@ -12,7 +12,7 @@ import {
   NetworkRule,
   WorkspaceSpec,
   ToolSpec,
-} from '../types';
+} from '../types.js';
 
 /** 沙箱决策结果 */
 export interface SandboxDecision {

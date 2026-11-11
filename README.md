@@ -31,6 +31,34 @@
 
 ---
 
+## 🛡️ 治理钩子（0.2.0 起接入请求路径）
+
+0.2.0 之前，上表所有能力都要靠命令手动触发。现在 C7 审计、C6 的脱敏/注入检测已接入
+DSH 的工具调用链；沙箱拦截可以做，但**默认关闭**。
+
+| 事件 | 做什么 | 开关 |
+|---|---|---|
+| `tools/result` | 每次工具调用写一条审计 | `governance.audit` |
+| `tools/post-execute` | 返回体里的密钥替换成 `[redacted:kind]`；疑似注入追加警告块或拦截 | `governance.redaction` / `governance.injection` |
+| `tools/pre-execute` | 按文件/命令/网络/工具启停规则拒绝调用 | `governance.sandbox`（默认 `false`） |
+
+三条硬约束：**fail-open**（内部异常一律放行）、**失败结果不改写**、**默认只开零风险项**。
+
+```jsonc
+"governance": {
+  "enabled": true,
+  "audit": true,
+  "redaction": true,
+  "injection": "annotate",   // off | annotate | block
+  "sandbox": false,          // 打开后会真的拒绝调用
+  "profile": "default"
+}
+```
+
+细节、`dsh-context` 共存策略与「返回体截断」的方案见 [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md)。
+
+---
+
 ## 🔌 对外契约：Registry（唯一耦合面）
 
 ```typescript

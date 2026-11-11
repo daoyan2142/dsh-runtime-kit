@@ -11,7 +11,7 @@ import {
   AuditLogFilter,
   MetricsSnapshot,
   Sandbox,
-} from '../types';
+} from '../types.js';
 
 /** 审计服务 */
 export class Audit {

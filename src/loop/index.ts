@@ -4,6 +4,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as crypto from 'node:crypto';
 import {
   Registry,
   ToolSpec,
@@ -19,7 +20,7 @@ import {
   ContextGovernance,
   MetricsSnapshot,
   Audit,
-} from '../types';
+} from '../types.js';
 
 /** 快路径执行器 */
 export class FastPathExecutor {
@@ -154,7 +155,6 @@ export class FastPathExecutor {
   }
 
   private generateIdempotencyKey(templateName: string, input: string): string {
-    const crypto = await import('crypto');
     return crypto.createHash('sha256').update(`${templateName}:${input}`).digest('hex').slice(0, 32);
   }
 

@@ -8,7 +8,7 @@ import {
   ToolSpec,
   ContextGovernanceConfig,
   MetricsSnapshot,
-} from '../types';
+} from '../types.js';
 
 /** 裁剪后的工具返回 */
 export interface GovernedToolResult extends ToolResult {

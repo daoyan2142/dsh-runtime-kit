@@ -8,7 +8,7 @@ import {
   TemplateSpec,
   WorkspaceSpec,
   Registry as IRegistry,
-} from './types';
+} from '../types.js';
 
 export class RegistryImpl implements IRegistry {
   private tools = new Map<string, ToolSpec>();

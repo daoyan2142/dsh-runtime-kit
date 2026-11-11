@@ -8,12 +8,13 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
-import { RegistryImpl, registry } from './registry';
-import { ContextGovernance } from './context';
-import { Sandbox } from './sandbox';
-import { Audit } from './audit';
-import { FastPathExecutor, PTCExecutor, SessionManager, ConcurrentScheduler } from './loop';
-import { applyPresetPatch, getPresetPatches, dumpConfig } from './preset';
+import { RegistryImpl, registry } from './registry/index.js';
+import { ContextGovernance } from './context/index.js';
+import { Sandbox } from './sandbox/index.js';
+import { Audit } from './audit/index.js';
+import { FastPathExecutor, PTCExecutor, SessionManager, ConcurrentScheduler } from './loop/index.js';
+import { applyPresetPatch, getPresetPatches, dumpConfig } from './preset/index.js';
+import { installGovernance, normalizeGovernance, DEFAULT_GOVERNANCE, GovernanceConfig } from './hooks/index.js';
 import {
   RuntimeKitConfig,
   RuntimeKitService,
@@ -28,7 +29,7 @@ import {
   IsolationCheckResult,
   HealthCheckResult,
   ToolResult,
-} from './types';
+} from './types.js';
 
 /** 插件配置类型（从 config.schema.json 推导） */
 interface PluginConfig {
@@ -36,6 +37,7 @@ interface PluginConfig {
   loop: RuntimeKitConfig['loop'];
   sandbox: RuntimeKitConfig['sandbox'];
   audit: RuntimeKitConfig['audit'];
+  governance: GovernanceConfig;
   logDir?: string;
   stateDir?: string;
 }
@@ -74,6 +76,7 @@ const DEFAULT_CONFIG: PluginConfig = {
     exportable: true,
     retentionDays: 90,
   },
+  governance: { ...DEFAULT_GOVERNANCE },
   logDir: path.join(os.homedir(), '.dsh', 'runtime-kit', 'logs'),
   stateDir: path.join(os.homedir(), '.dsh', 'runtime-kit', 'state'),
 };
@@ -265,6 +268,7 @@ export async function apply(ctx: Context, rawConfig: Partial<PluginConfig> = {})
     loop: { ...DEFAULT_CONFIG.loop, ...rawConfig.loop },
     sandbox: { ...DEFAULT_CONFIG.sandbox, ...rawConfig.sandbox },
     audit: { ...DEFAULT_CONFIG.audit, ...rawConfig.audit },
+    governance: normalizeGovernance({ ...DEFAULT_GOVERNANCE, ...(rawConfig.governance ?? {}) }),
   };
 
   // 确保目录存在
@@ -276,6 +280,10 @@ export async function apply(ctx: Context, rawConfig: Partial<PluginConfig> = {})
 
   // 提供服务
   ctx.provide('runtimeKit', service);
+
+  // ========== 治理钩子（工具返回脱敏 / 注入检测 / 沙箱拦截 / 审计） ==========
+  // 全部 fail-open：钩子内部出错一律放行，不影响正常工具调用。
+  installGovernance(ctx as any, service, config.governance);
 
   // 生命周期
   ctx.on('dispose', async () => {
