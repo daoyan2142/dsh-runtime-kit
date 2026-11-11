@@ -269,3 +269,5 @@ src/
 
 - 对标规格：内部《DSH 快速执行与沙箱方案》v2.1（§0–§8）
 - DSH 运行时：宿主安装目录下的 `resources/app.asar/dsh/`
+
+逐版改动见 [CHANGELOG.md](./CHANGELOG.md)。
