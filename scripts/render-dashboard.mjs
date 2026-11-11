@@ -34,7 +34,7 @@ const client = captured.factory((name) => {
 })
 
 const state = {
-  health: { status: 'healthy', version: '0.12.0', dshVersion: '0.1.0', checks: {} },
+  health: { status: 'healthy', version: '0.14.0', dshVersion: '0.1.0', checks: {} },
   governance: { enabled: true, audit: true, redaction: true, injection: 'annotate', sandbox: false, profile: 'default', truncation: { mode: 'shadow', maxBytes: 4096, spill: true, perTool: {} } },
   auditToday: [
     { timestamp: '2026-11-11T06:14:03.000Z', tool: 'read', action: 'return', result: 'SUCCESS', error: '' },

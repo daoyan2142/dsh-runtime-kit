@@ -86,6 +86,13 @@ export interface GovernanceStats {
   pruneReclaimable?: number;
   /** 写入模式实际省下的字符数 */
   pruneSaved?: number;
+  /** 脱敏替换次数 */
+  redactions?: number;
+  /** 注入命中次数 */
+  injectionHits?: number;
+  /** 行投影命中次数与省下的行数 */
+  projectedCalls?: number;
+  projectedLines?: number;
   /** 最近一次观察到的消息结构 */
   lastShape?: unknown;
 }
@@ -95,7 +102,7 @@ const STATS = new WeakMap<object, GovernanceStats>();
 export function governanceStats(service: object): GovernanceStats {
   let stats = STATS.get(service);
   if (!stats) {
-    stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null, pruneSteps: 0, pruneReclaimable: 0, pruneSaved: 0 };
+    stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null, pruneSteps: 0, pruneReclaimable: 0, pruneSaved: 0, redactions: 0, injectionHits: 0, projectedCalls: 0, projectedLines: 0 };
     STATS.set(service, stats);
   }
   return stats;
@@ -264,6 +271,11 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
 
       const tool = String(exec?.name ?? 'unknown');
       const inspected = inspectBlocks(blocks, config);
+      {
+        const counters = governanceStats(service);
+        if (inspected.redacted.length) counters.redactions = (counters.redactions ?? 0) + 1;
+        if (inspected.injected.length) counters.injectionHits = (counters.injectionHits ?? 0) + 1;
+      }
 
       if (config.injection === 'block' && inspected.injected.length) {
         audit(service, config, {
@@ -317,6 +329,7 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
           }
 
           const dir = truncation.spill ? spillDirectory(service) : undefined;
+          stats.projectedCalls = stats.projectedCalls ?? 0;
           const files: string[] = [];
           if (dir) {
             try {
@@ -355,6 +368,7 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
       if (projection && projection.mode === 'on' && content.length) {
         const limit = projection.maxLines?.[tool] ?? projection.maxLines?.default ?? 0;
         if (limit > 0) {
+          const before = projectedLines;
           content = content.map((block) => {
             if (!block || typeof block.text !== 'string') return block;
             const projected = projectLines(block.text, limit);
@@ -362,6 +376,10 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
             projectedLines += projected.total - projected.shown;
             return { ...block, text: projected.text + `\n…[runtime-kit] projected: ${projected.shown}/${projected.total} lines` };
           });
+          if (projectedLines > before) {
+            stats.projectedCalls = (stats.projectedCalls ?? 0) + 1;
+            stats.projectedLines = (stats.projectedLines ?? 0) + (projectedLines - before);
+          }
         }
       }
 

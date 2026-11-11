@@ -23,7 +23,7 @@ const STATS = new WeakMap();
 export function governanceStats(service) {
     let stats = STATS.get(service);
     if (!stats) {
-        stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null, pruneSteps: 0, pruneReclaimable: 0, pruneSaved: 0 };
+        stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null, pruneSteps: 0, pruneReclaimable: 0, pruneSaved: 0, redactions: 0, injectionHits: 0, projectedCalls: 0, projectedLines: 0 };
         STATS.set(service, stats);
     }
     return stats;
@@ -178,6 +178,13 @@ export function installGovernance(ctx, service, raw) {
                 return next();
             const tool = String(exec?.name ?? 'unknown');
             const inspected = inspectBlocks(blocks, config);
+            {
+                const counters = governanceStats(service);
+                if (inspected.redacted.length)
+                    counters.redactions = (counters.redactions ?? 0) + 1;
+                if (inspected.injected.length)
+                    counters.injectionHits = (counters.injectionHits ?? 0) + 1;
+            }
             if (config.injection === 'block' && inspected.injected.length) {
                 audit(service, config, {
                     profile: config.profile,
@@ -225,6 +232,7 @@ export function installGovernance(ctx, service, raw) {
                         return next();
                     }
                     const dir = truncation.spill ? spillDirectory(service) : undefined;
+                    stats.projectedCalls = stats.projectedCalls ?? 0;
                     const files = [];
                     if (dir) {
                         try {
@@ -264,6 +272,7 @@ export function installGovernance(ctx, service, raw) {
             if (projection && projection.mode === 'on' && content.length) {
                 const limit = projection.maxLines?.[tool] ?? projection.maxLines?.default ?? 0;
                 if (limit > 0) {
+                    const before = projectedLines;
                     content = content.map((block) => {
                         if (!block || typeof block.text !== 'string')
                             return block;
@@ -273,6 +282,10 @@ export function installGovernance(ctx, service, raw) {
                         projectedLines += projected.total - projected.shown;
                         return { ...block, text: projected.text + `\n…[runtime-kit] projected: ${projected.shown}/${projected.total} lines` };
                     });
+                    if (projectedLines > before) {
+                        stats.projectedCalls = (stats.projectedCalls ?? 0) + 1;
+                        stats.projectedLines = (stats.projectedLines ?? 0) + (projectedLines - before);
+                    }
                 }
             }
             const changed = inspected.redacted.length > 0 || inspected.injected.length > 0 || cutBytes > 0 || projectedLines > 0;

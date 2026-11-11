@@ -78,6 +78,7 @@ window.__ModuleLoader__.load({
 .rk-zone{display:flex;align-items:baseline;gap:8px;margin-top:12px;padding:0 2px}
 .rk-zone-t{font-size:12.5px;font-weight:600;letter-spacing:.2px}
 .rk-zone-h{font-size:11.5px;color:var(--dsw-alias-label-secondary,#9a9a9a)}
+.rk-impact{font-size:11.5px;color:var(--dsw-alias-label-secondary,#9a9a9a);font-family:var(--dsw-font-mono,ui-monospace,Consolas,monospace);padding-top:2px}
 .rk-note{font-size:12px;color:var(--dsw-alias-brand-primary,#8ab4ff)}
 .rk-details{border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:12px;padding:8px 16px;display:flex;flex-direction:column;gap:8px}
 .rk-details summary{cursor:pointer;font-size:12.5px;font-weight:600;list-style:none}
@@ -460,6 +461,15 @@ window.__ModuleLoader__.load({
           ),
         ),
 
+        h(
+          'div',
+          { className: 'rk-impact', style: { padding: '0 4px 4px' } },
+          L(
+            '实测：脱敏 ' + (truncStats.redactions || 0) + ' 次 · 注入命中 ' + (truncStats.injectionHits || 0) + ' 次 · 今天记录 ' + todayEntries.length + ' 条',
+            'measured: redacted ' + (truncStats.redactions || 0) + ' · injection ' + (truncStats.injectionHits || 0) + ' · today ' + todayEntries.length,
+          ),
+        ),
+
         // ---------------- zone 2: 上下文节省 ----------------
         h('div', { className: 'rk-zone' }, h('span', { className: 'rk-zone-t' }, L('② 上下文节省', 'Context')), h('span', { className: 'rk-badge warn' }, L('改变输出', 'changes output')), h('span', { className: 'rk-zone-h' }, L('只在你想省 token 时打开', 'turn on only to save tokens'))),
         h(
@@ -473,6 +483,14 @@ window.__ModuleLoader__.load({
               { className: 'rk-row-main' },
               h('div', { className: 'rk-row-t' }, L('返回体裁剪', 'Tool-output truncation')),
               h('div', { className: 'rk-row-d' }, L('超预算就切开，全文落到 spill 目录；"只记账"不改变任何返回', 'Cut over budget; full text goes to spill. "shadow" changes nothing')),
+              h(
+                'div',
+                { className: 'rk-impact' },
+                L(
+                  '实测：命中 ' + (truncStats.truncated || 0) + ' 次 · 省 ' + fmtBytes(truncStats.savedBytes || 0),
+                  'measured: ' + (truncStats.truncated || 0) + ' hits · saved ' + fmtBytes(truncStats.savedBytes || 0),
+                ),
+              ),
             ),
             h(
               'div',
@@ -511,6 +529,14 @@ window.__ModuleLoader__.load({
               { className: 'rk-row-main' },
               h('div', { className: 'rk-row-t' }, L('行投影', 'Line projection')),
               h('div', { className: 'rk-row-d' }, L('按整行裁剪，适合表格和搜索结果；不影响普通文本', 'Drops whole lines — good for tables; text is untouched')),
+              h(
+                'div',
+                { className: 'rk-impact' },
+                L(
+                  '实测：命中 ' + (truncStats.projectedCalls || 0) + ' 次 · 裁掉 ' + (truncStats.projectedLines || 0) + ' 行',
+                  'measured: ' + (truncStats.projectedCalls || 0) + ' hits · ' + (truncStats.projectedLines || 0) + ' lines dropped',
+                ),
+              ),
             ),
             h(
               'div',
@@ -551,6 +577,14 @@ window.__ModuleLoader__.load({
               { className: 'rk-row-main' },
               h('div', { className: 'rk-row-t' }, L('历史裁剪', 'History pruning')),
               h('div', { className: 'rk-row-d' }, L('缩短很旧的工具返回；不删消息、不删块、最近几轮不动', 'Shortens old tool results; never removes a message or block')),
+              h(
+                'div',
+                { className: 'rk-impact' },
+                L(
+                  '实测：可回收 ' + fmtBytes(state?.prune?.reclaimable || 0) + (state?.prune?.saved ? ' · 已省 ' + fmtBytes(state.prune.saved) : ''),
+                  'measured: reclaimable ' + fmtBytes(state?.prune?.reclaimable || 0) + (state?.prune?.saved ? ' · saved ' + fmtBytes(state.prune.saved) : ''),
+                ),
+              ),
             ),
             h(
               'div',
@@ -572,24 +606,7 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
-          truncStats.calls || state?.prune?.steps
-            ? h(
-                'div',
-                { className: 'rk-sub' },
-                L(
-                  '实测：裁剪命中 ' +
-                    (truncStats.truncated || 0) +
-                    ' 次，省 ' +
-                    fmtBytes(truncStats.savedBytes || 0) +
-                    (state?.prune?.steps ? ' · 历史可回收 ' + fmtBytes(state.prune.reclaimable || 0) : ''),
-                  'measured: truncated ' +
-                    (truncStats.truncated || 0) +
-                    ' times, saved ' +
-                    fmtBytes(truncStats.savedBytes || 0) +
-                    (state?.prune?.steps ? ' · history reclaimable ' + fmtBytes(state.prune.reclaimable || 0) : ''),
-                ),
-              )
-            : null,
+
         ),
 
         // ---------------- zone 3: 沙箱 ----------------
@@ -784,6 +801,15 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'rk-sub' },
             L('基线 ', 'Mode ') + (sandbox.mode || '—') + ' · ' + L('审批 ', 'Approval ') + (sandbox.approval || '—') + ' · ' + L('规则 ', 'Rules ') + (sandbox.files || 0) + '/' + (sandbox.commands || 0) + '/' + (sandbox.network || 0),
+          ),
+        ),
+
+        h(
+          'div',
+          { className: 'rk-impact', style: { padding: '0 4px 4px' } },
+          L(
+            '实测：拦截 ' + (observed.blocked || 0) + ' 次 · 询问 ' + (observed.asked || 0) + ' 次',
+            'measured: blocked ' + (observed.blocked || 0) + ' · asked ' + (observed.asked || 0),
           ),
         ),
 
