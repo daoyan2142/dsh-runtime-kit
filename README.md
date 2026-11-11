@@ -57,6 +57,17 @@ DSH 的工具调用链；沙箱拦截可以做，但**默认关闭**。
 
 细节、`dsh-context` 共存策略与「返回体截断」的方案见 [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md)。
 
+### 页面
+
+插件带一个客户端半（`client.js`），治理状态不用再敲命令看：
+
+- **设置页 → 运行时治理**：总览（工具/模板/工作区/审计条数）、四个开关、沙箱规则、最近 20 条审计流水、注册表内容
+- **侧栏 → 运行时**（装了 better-sidebar 时）：同一套内容，日常查看更顺手
+
+开关改完点保存即刻生效，不需要重启；选择写进 `<stateDir>/governance.json`，下次启动沿用。
+
+页面和命令读的是同一份状态：`runtime_kit_health`、`runtime_kit_audit_logs`、`runtime_kit_config` 看到的结果与页面一致。
+
 ---
 
 ## 🔌 对外契约：Registry（唯一耦合面）

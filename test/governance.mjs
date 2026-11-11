@@ -112,7 +112,14 @@ const svc = { sandbox: allowSandbox, audit: noopAudit };
 
 const offCtx = makeCtx();
 installGovernance(offCtx, svc, { enabled: false });
-check('enabled=false 时不注册任何钩子', offCtx.handlers.size === 0);
+check('enabled=false 仍注册钩子（便于页面实时开回）', offCtx.handlers.size === 3);
+const offNext = { kind: 'accept', marker: 'off' };
+const offPass = await offCtx.handlers.get('tools/post-execute')(
+  { name: 'fetch', arguments: {} },
+  { isError: false, content: [{ type: 'text', text: 'ghp_abcdefghijklmnopqrstuvwxyz0123456789' }] },
+  async () => offNext
+);
+check('总开关关闭时原样放行，不做脱敏', offPass === offNext);
 
 const ctx = makeCtx();
 installGovernance(ctx, svc, {});

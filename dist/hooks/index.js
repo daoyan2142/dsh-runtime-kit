@@ -97,11 +97,15 @@ function audit(service, config, entry) {
  */
 export function installGovernance(ctx, service, raw) {
     const config = normalizeGovernance(raw);
-    if (!config.enabled || typeof ctx?.on !== 'function')
+    // Hooks stay registered even when disabled: every listener re-reads the flag,
+    // so the dashboard can turn governance on and off without a restart.
+    if (typeof ctx?.on !== 'function')
         return config;
     // ---- 只读观察：每次工具调用落一条审计 ----
     ctx.on('tools/result', (exec, result) => {
         try {
+            if (!config.enabled || !config.audit)
+                return;
             audit(service, config, {
                 profile: config.profile,
                 tool: String(exec?.name ?? 'unknown'),
@@ -118,6 +122,8 @@ export function installGovernance(ctx, service, raw) {
     // ---- 改写返回体：脱敏 + 注入标注 ----
     ctx.on('tools/post-execute', async (exec, result, next) => {
         try {
+            if (!config.enabled)
+                return next();
             if (!config.redaction && config.injection === 'off')
                 return next();
             if (result?.isError)
@@ -166,7 +172,7 @@ export function installGovernance(ctx, service, raw) {
     // ---- 调用前拦截：沙箱规则（默认关闭） ----
     ctx.on('tools/pre-execute', async (exec, next) => {
         try {
-            if (!config.sandbox)
+            if (!config.enabled || !config.sandbox)
                 return next();
             const verdict = evaluateCall(exec, service.sandbox, config);
             if (verdict.action === 'allow')

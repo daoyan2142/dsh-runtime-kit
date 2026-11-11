@@ -161,11 +161,14 @@ function audit(service: HookService, config: GovernanceConfig, entry: Parameters
  */
 export function installGovernance(ctx: { on?: (name: string, listener: (...args: any[]) => any) => unknown }, service: HookService, raw: unknown): GovernanceConfig {
   const config = normalizeGovernance(raw);
-  if (!config.enabled || typeof ctx?.on !== 'function') return config;
+  // Hooks stay registered even when disabled: every listener re-reads the flag,
+  // so the dashboard can turn governance on and off without a restart.
+  if (typeof ctx?.on !== 'function') return config;
 
   // ---- 只读观察：每次工具调用落一条审计 ----
   ctx.on('tools/result', (exec: any, result: any) => {
     try {
+      if (!config.enabled || !config.audit) return;
       audit(service, config, {
         profile: config.profile,
         tool: String(exec?.name ?? 'unknown'),
@@ -182,6 +185,7 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
   // ---- 改写返回体：脱敏 + 注入标注 ----
   ctx.on('tools/post-execute', async (exec: any, result: any, next: () => Promise<any>) => {
     try {
+      if (!config.enabled) return next();
       if (!config.redaction && config.injection === 'off') return next();
       if (result?.isError) return next(); // 失败结果不改写：accept 会把它变成成功
       const blocks: BlockLike[] = Array.isArray(result?.content) ? result.content : [];
@@ -229,7 +233,7 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
   // ---- 调用前拦截：沙箱规则（默认关闭） ----
   ctx.on('tools/pre-execute', async (exec: any, next: () => Promise<any>) => {
     try {
-      if (!config.sandbox) return next();
+      if (!config.enabled || !config.sandbox) return next();
       const verdict = evaluateCall(exec, service.sandbox, config);
       if (verdict.action === 'allow') return next();
 

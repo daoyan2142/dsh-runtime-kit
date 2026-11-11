@@ -1121,11 +1121,20 @@ async function apply(ctx, raw = {}) {
   ctx.provide('runtimeKit', svc);
 
   // ---- 治理钩子：审计 / 脱敏 / 注入检测 / 沙箱（全部 fail-open） ----
+  // ---- 治理钩子：审计 / 脱敏 / 注入检测 / 沙箱（全部 fail-open） ----
   config.governance = { ...DEFAULT_GOVERNANCE, ...(raw.governance ?? {}) };
   try {
-    installGovernance(ctx, svc, config.governance);
+    svc.governance = installGovernance(ctx, svc, config.governance);
   } catch (error) {
     ctx.logger?.warn?.(`[runtime-kit] governance hooks failed: ${String(error)}`);
+  }
+
+  // ---- 页面：把能力暴露成 HTTP，客户端设置页/侧栏读取 ----
+  try {
+    const { mountDashboard } = await import('./dashboard/index.js');
+    mountDashboard(ctx, svc);
+  } catch (error) {
+    ctx.logger?.warn?.(`[runtime-kit] dashboard failed: ${String(error)}`);
   }
 
   const registerCommands = (commandCtx) => {
