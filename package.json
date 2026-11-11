@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "dsh-runtime-kit",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "DSH runtime plugin: context governance, fast path, PTC orchestration, sandbox isolation and audit — zero business dependencies",
   "keywords": [
     "dsh",
@@ -88,6 +88,7 @@
     "access": "public"
   }
 }
+
 
 
 

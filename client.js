@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
 .rk-stat{border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:2px;min-width:0}
 .rk-stat-k{font-size:11.5px;color:var(--dsw-alias-label-secondary,#9a9a9a)}
 .rk-stat-v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
-.rk-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:7px 0;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.14))}
+.rk-row{display:flex;align-items:center;gap:10px;row-gap:6px;flex-wrap:wrap;justify-content:space-between;padding:7px 0;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.14))}
 .rk-row:first-child{border-top:0}
 .rk-row-main{display:flex;flex-direction:column;gap:1px;min-width:0}
 .rk-row-t{font-size:12.5px}
@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
 .rk-btn:disabled{opacity:.5;cursor:default}
 .rk-btn.primary{border-color:color-mix(in srgb,#4c8dff 55%,transparent);color:var(--dsw-alias-brand-primary,#8ab4ff);background:color-mix(in srgb,#4c8dff 13%,transparent)}
 .rk-seg{display:inline-flex;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:8px;overflow:hidden}
-.rk-seg button{height:26px;padding:0 10px;border:0;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
+.rk-seg button{height:26px;padding:0 10px;white-space:nowrap;border:0;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
 .rk-seg button.on{background:color-mix(in srgb,#4c8dff 18%,transparent);color:var(--dsw-alias-brand-primary,#7fb0ff)}
 .rk-switch{position:relative;width:34px;height:19px;border-radius:20px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.4));background:transparent;cursor:pointer;flex:0 0 auto;padding:0}
 .rk-switch.on{background:color-mix(in srgb,#4c8dff 45%,transparent);border-color:transparent}
@@ -73,6 +73,7 @@ window.__ModuleLoader__.load({
 .rk-table td{padding:4px 6px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
 .rk-chips{display:flex;flex-wrap:wrap;gap:5px}
 .rk-chip{font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:11px;padding:1px 6px;border-radius:6px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12))}
+.rk-scroll{overflow-x:auto;max-width:100%}
 .rk-empty{font-size:12px;color:var(--dsw-alias-label-secondary,#9a9a9a);padding:2px 0}
 .rk-err{font-size:12px;color:#f85149}
 `
@@ -364,6 +365,9 @@ window.__ModuleLoader__.load({
           { title: L('审计流水', 'Audit log') },
           audit.length
             ? h(
+                'div',
+                { className: 'rk-scroll' },
+                h(
                 'table',
                 { className: 'rk-table' },
                 h(
@@ -408,6 +412,7 @@ window.__ModuleLoader__.load({
                         h('td', { className: 'rk-mono', title: entry.error || '' }, entry.error || ''),
                       ),
                     ),
+                ),
                 ),
               )
             : h('div', { className: 'rk-empty' }, L('还没有调用记录。', 'No calls recorded yet.')),
