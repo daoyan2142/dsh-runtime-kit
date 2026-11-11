@@ -248,7 +248,7 @@ check('投影关闭时原样放行', projOff.marker === 'plain');
 
 
 console.log('\n[11] 历史裁剪观察器');
-const { describeMessages } = await import(new URL('../dist/hooks/policy.js', import.meta.url).href);
+const { describeMessages, pruneOldMessages } = await import(new URL('../dist/hooks/policy.js', import.meta.url).href);
 const messages = [
   { role: 'user', content: [{ type: 'text', text: 'a'.repeat(5000) }] },
   { role: 'assistant', content: [{ type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' }] },
@@ -274,6 +274,39 @@ const offPruneCtx = makeCtx();
 installGovernance(offPruneCtx, svc, { pruner: { mode: 'off' } });
 const offPrune = await offPruneCtx.handlers.get('agent/pre-step')({ messages, turn: 1, step: 1 }, async () => nextShape);
 check('mode=off 时直接放行', offPrune === nextShape);
+
+
+console.log('\n[12] 历史裁剪：写入模式的结构安全');
+const huge = 'x'.repeat(3000);
+const shapeA = [
+  { role: 'tool', content: huge },
+  { role: 'user', content: 'latest' },
+];
+const prunedA = pruneOldMessages(shapeA, { keepTurns: 1, maxChars: 500 });
+check('role=tool 的字符串被缩短', prunedA.touched === 1 && prunedA.messages[0].content.length < huge.length);
+check('截断处有标注', String(prunedA.messages[0].content).includes('pruned'));
+check('最近 keepTurns 条不动', prunedA.messages[1] === shapeA[1]);
+
+const shapeB = [
+  { role: 'assistant', content: [{ type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' }] },
+  { role: 'user', content: [{ type: 'tool-result', toolCallId: 'c1', text: huge }] },
+  { role: 'user', content: [{ type: 'text', text: 'latest' }] },
+];
+const prunedB = pruneOldMessages(shapeB, { keepTurns: 1, maxChars: 400 });
+check('tool-result 文本被缩短', Array.isArray(prunedB.messages[1].content) && prunedB.messages[1].content[0].text.length < huge.length);
+check('块数量不变（不删块）', prunedB.messages[1].content.length === 1 && prunedB.messages[0].content.length === 1);
+check('tool-call 块原样保留', prunedB.messages[0] === shapeB[0]);
+check('toolCallId 等字段没丢', prunedB.messages[1].content[0].toolCallId === 'c1');
+
+const unknownShape = [{ role: 'user', content: [{ type: 'mystery', body: huge }] }, { role: 'user', content: 'x' }];
+const prunedU = pruneOldMessages(unknownShape, { keepTurns: 1, maxChars: 100 });
+check('认不出的结构一个字节都不改', prunedU.touched === 0 && prunedU.messages[0] === unknownShape[0]);
+
+const onPruneCtx = makeCtx();
+installGovernance(onPruneCtx, svc, { pruner: { mode: 'on', keepTurns: 0, maxChars: 200 } });
+const entered = await onPruneCtx.handlers.get('agent/pre-step')({ messages: shapeA, turn: 5, step: 2 }, async () => ({ kind: 'enter', messages: shapeA }));
+check('mode=on 返回 enter 且消息被改写', entered.kind === 'enter' && entered.messages[0].content.length < huge.length);
+check('mode=on 时不删除消息', entered.messages.length === shapeA.length);
 
 console.log(`\n========== 结果: ${pass} 通过, ${fail} 失败 ==========`);
 if (fail > 0) process.exit(1);

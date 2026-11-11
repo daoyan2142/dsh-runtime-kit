@@ -277,7 +277,7 @@
         "pruner": {
           "type": "object",
           "properties": {
-            "mode": { "type": "string", "enum": ["off", "shadow"], "default": "off", "description": "历史裁剪：目前只提供观察模式，不改写消息" },
+            "mode": { "type": "string", "enum": ["off", "shadow", "on"], "default": "off", "description": "历史裁剪：off 不动 / shadow 只统计 / on 缩短旧工具返回的文本（只改文本，不删消息或块）" },
             "keepTurns": { "type": "integer", "minimum": 0, "maximum": 100, "default": 4, "description": "最近多少轮保持原样" },
             "maxChars": { "type": "integer", "minimum": 256, "default": 2000, "description": "更早的工具返回超过这个长度才算可回收" }
           },

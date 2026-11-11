@@ -753,13 +753,13 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'rk-row-main' },
-              h('div', { className: 'rk-row-t' }, L('历史裁剪（观察）', 'History pruning (observe)')),
+              h('div', { className: 'rk-row-t' }, L('历史裁剪', 'History pruning')),
               h(
                 'div',
                 { className: 'rk-row-d' },
                 L(
-                  '只统计「最早几轮能省多少」，不改写消息；写入模式等结构确认后再开',
-                  'Measures what the oldest turns cost; never rewrites messages yet',
+                  '观察只统计；开 = 缩短旧工具返回的文本，不删消息、不删块、最近 N 轮不动',
+                  'Observe only counts; on shortens old tool-result text — no message or block is ever removed',
                 ),
               ),
             ),
@@ -769,6 +769,7 @@ window.__ModuleLoader__.load({
               ...[
                 ['off', L('关', 'off')],
                 ['shadow', L('观察', 'observe')],
+                ['on', L('开', 'on')],
               ].map(([value, label]) =>
                 h(
                   'button',
@@ -787,8 +788,20 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'rk-sub' },
                 L(
-                  '已观察 ' + state.prune.steps + ' 步 · 可回收 ' + fmtBytes(state.prune.reclaimable) + ' · 最近一次结构：' + describeShape(state.prune.shape),
-                  'observed ' + state.prune.steps + ' steps · reclaimable ' + fmtBytes(state.prune.reclaimable) + ' · last shape: ' + describeShape(state.prune.shape),
+                  '已观察 ' +
+                    state.prune.steps +
+                    ' 步 · 可回收 ' +
+                    fmtBytes(state.prune.reclaimable) +
+                    (state.prune.saved ? ' · 已改写省下 ' + fmtBytes(state.prune.saved) : '') +
+                    ' · 最近一次结构：' +
+                    describeShape(state.prune.shape),
+                  'observed ' +
+                    state.prune.steps +
+                    ' steps · reclaimable ' +
+                    fmtBytes(state.prune.reclaimable) +
+                    (state.prune.saved ? ' · saved ' + fmtBytes(state.prune.saved) : '') +
+                    ' · last shape: ' +
+                    describeShape(state.prune.shape),
                 ),
               )
             : null,

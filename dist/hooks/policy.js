@@ -293,7 +293,7 @@ export function normalizePruner(raw) {
     const keepTurns = Number(input.keepTurns);
     const maxChars = Number(input.maxChars);
     return {
-        mode: input.mode === 'shadow' ? 'shadow' : 'off',
+        mode: input.mode === 'on' ? 'on' : input.mode === 'shadow' ? 'shadow' : 'off',
         keepTurns: Number.isFinite(keepTurns) && keepTurns >= 0 ? Math.floor(keepTurns) : DEFAULT_PRUNER.keepTurns,
         maxChars: Number.isFinite(maxChars) && maxChars >= 256 ? Math.floor(maxChars) : DEFAULT_PRUNER.maxChars,
     };
@@ -349,6 +349,89 @@ export function describeMessages(messages, keepTurns) {
             reclaimable += size;
     }
     return { messages: list.length, roles, blockTypes, chars, reclaimable };
+}
+const TOOL_RESULT_TYPES = new Set(['tool-result', 'tool_result', 'toolResult', 'function-result']);
+function isToolResultBlock(block) {
+    return Boolean(block && typeof block === 'object' && TOOL_RESULT_TYPES.has(String(block.type ?? '')));
+}
+/** 从块里找到可以安全缩短的字符串（原地返回新对象）。 */
+function shrinkBlock(block, maxChars) {
+    if (typeof block?.text === 'string' && block.text.length > maxChars) {
+        const kept = block.text.slice(0, maxChars);
+        return { block: { ...block, text: kept + `\n…[runtime-kit] pruned: ${kept.length}/${block.text.length} chars` }, saved: block.text.length - kept.length };
+    }
+    if (Array.isArray(block?.content)) {
+        let saved = 0;
+        let touched = false;
+        const content = block.content.map((inner) => {
+            if (inner && typeof inner === 'object' && typeof inner.text === 'string' && inner.text.length > maxChars) {
+                const kept = inner.text.slice(0, maxChars);
+                saved += inner.text.length - kept.length;
+                touched = true;
+                return { ...inner, text: kept + `\n…[runtime-kit] pruned: ${kept.length}/${inner.text.length} chars` };
+            }
+            return inner;
+        });
+        if (touched)
+            return { block: { ...block, content }, saved };
+    }
+    return null;
+}
+/**
+ * 缩短"旧"工具返回的文本，**不动结构**。
+ *
+ * 安全约束（这几条是这个函数存在的理由）：
+ *   1. 只替换字符串，永远不删除消息、不删除块、不改块类型 —— 删块会打断
+ *      tool-call / tool-result 配对，整段会话会直接 400；
+ *   2. 最近 keepTurns 条原样保留；
+ *   3. 认不出结构就返回"没有任何改动"，由调用方走 next()。
+ */
+export function pruneOldMessages(messages, options) {
+    const list = Array.isArray(messages) ? messages : [];
+    const keep = Math.max(0, options.keepTurns);
+    const depth = Math.max(0, list.length - keep);
+    const changed = new Map();
+    let savedChars = 0;
+    let touched = 0;
+    for (let index = 0; index < depth; index++) {
+        const message = list[index];
+        if (!message || typeof message !== 'object')
+            continue;
+        // 形状 A：role=tool，content 是纯字符串
+        if (typeof message.content === 'string' && message.content.length > options.maxChars && String(message.role) === 'tool') {
+            const kept = message.content.slice(0, options.maxChars);
+            changed.set(index, { ...message, content: kept + `\n…[runtime-kit] pruned: ${kept.length}/${message.content.length} chars` });
+            savedChars += message.content.length - kept.length;
+            touched += 1;
+            continue;
+        }
+        // 形状 B：content 是块数组，块里带 tool-result 标记
+        if (Array.isArray(message.content)) {
+            let messageSaved = 0;
+            let messageTouched = false;
+            const content = message.content.map((block) => {
+                if (!isToolResultBlock(block))
+                    return block;
+                const result = shrinkBlock(block, options.maxChars);
+                if (!result)
+                    return block;
+                messageSaved += result.saved;
+                messageTouched = true;
+                return result.block;
+            });
+            if (messageTouched) {
+                changed.set(index, { ...message, content });
+                savedChars += messageSaved;
+                touched += 1;
+            }
+        }
+    }
+    return {
+        changed,
+        messages: list.map((message, index) => (changed.has(index) ? changed.get(index) : message)),
+        savedChars,
+        touched,
+    };
 }
 /** 按 `a.b[].c` 取值，返回其中所有字符串。 */
 export function readPathSpec(source, spec) {

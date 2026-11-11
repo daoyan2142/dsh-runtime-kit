@@ -32,6 +32,7 @@ import {
   truncateBlocks,
   projectLines,
   describeMessages,
+  pruneOldMessages,
   GovernanceConfig,
 } from './policy.js';
 
@@ -83,6 +84,8 @@ export interface GovernanceStats {
   pruneSteps?: number;
   /** 若只保留最近 keepTurns 轮，理论上能省的字符数 */
   pruneReclaimable?: number;
+  /** 写入模式实际省下的字符数 */
+  pruneSaved?: number;
   /** 最近一次观察到的消息结构 */
   lastShape?: unknown;
 }
@@ -92,7 +95,7 @@ const STATS = new WeakMap<object, GovernanceStats>();
 export function governanceStats(service: object): GovernanceStats {
   let stats = STATS.get(service);
   if (!stats) {
-    stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null, pruneSteps: 0, pruneReclaimable: 0 };
+    stats = { calls: 0, truncated: 0, savedBytes: 0, spillFiles: 0, lastAt: null, pruneSteps: 0, pruneReclaimable: 0, pruneSaved: 0 };
     STATS.set(service, stats);
   }
   return stats;
@@ -393,6 +396,24 @@ export function installGovernance(ctx: { on?: (name: string, listener: (...args:
       stats.pruneSteps = (stats.pruneSteps ?? 0) + 1;
       stats.pruneReclaimable = (stats.pruneReclaimable ?? 0) + shape.reclaimable;
       stats.lastShape = shape;
+      // 写入模式：只缩短旧消息里的工具返回文本，结构一个字节都不动
+      if (pruner.mode === 'on' && shape.reclaimable > 0) {
+        const rewritten = pruneOldMessages(payload?.messages ?? [], { keepTurns: pruner.keepTurns, maxChars: pruner.maxChars });
+        if (rewritten.touched > 0) {
+          stats.pruneSaved = (stats.pruneSaved ?? 0) + rewritten.savedChars;
+          audit(service, config, {
+            profile: config.profile,
+            tool: 'agent/pre-step',
+            action: 'call',
+            paramsHash: String(payload?.turn ?? ''),
+            result: 'SUCCESS',
+            durationMs: 0,
+            error: `prune:on:${rewritten.savedChars}B`,
+          });
+          return { kind: 'enter', messages: rewritten.messages };
+        }
+      }
+
       if (shape.reclaimable > 0) {
         audit(service, config, {
           profile: config.profile,

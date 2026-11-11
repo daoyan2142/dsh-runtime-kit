@@ -189,6 +189,7 @@ async function buildState(service: DashboardService) {
       steps: governanceStats(service).pruneSteps ?? 0,
       reclaimable: governanceStats(service).pruneReclaimable ?? 0,
       shape: governanceStats(service).lastShape ?? null,
+      saved: governanceStats(service).pruneSaved ?? 0,
     },
     registry: {
       tools: (service.registry?.listTools?.() ?? []).map((tool: any) => tool.name),
