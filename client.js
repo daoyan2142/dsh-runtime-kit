@@ -210,6 +210,8 @@ window.__ModuleLoader__.load({
       const audit = state?.audit || []
       const registry = state?.registry || { tools: [], templates: [], workspaces: [] }
       const sandbox = state?.sandbox || {}
+      const context = state?.context || {}
+      const metrics = state?.metrics || []
 
       return h(
         'div',
@@ -358,6 +360,91 @@ window.__ModuleLoader__.load({
               'Tool control',
             )}: ${sandbox.toolControl ?? 0}`,
           ),
+        ),
+
+        h(
+          Card,
+          { title: L('上下文治理', 'Context governance') },
+          h(
+            'div',
+            { className: 'rk-grid' },
+            h(Stat, {
+              label: L('单次返回上限', 'Return cap'),
+              value: context.maxReturnBytes ? `${context.maxReturnBytes} B` : '—',
+            }),
+            h(Stat, {
+              label: L('字段投影', 'Field projection'),
+              value: context.fieldsProjection ? L('开', 'on') : L('关', 'off'),
+            }),
+            h(Stat, {
+              label: L('pruner / compaction', 'pruner / compaction'),
+              value: `${context.prunerEnabled ? L('开', 'on') : L('关', 'off')} / ${
+                context.compactionEnabled ? L('开', 'on') : L('关', 'off')
+              }`,
+            }),
+            h(Stat, {
+              label: L('延迟工具加载', 'Lazy tool loading'),
+              value: context.lazyLoadTools ? L('开', 'on') : L('关', 'off'),
+            }),
+          ),
+          h(
+            'div',
+            { className: 'rk-sub' },
+            L(
+              '生效范围：只作用于本插件自己的快路径与 PTC 执行；平台的工具调用还没接入，这些上限目前不会裁剪 read / grep / pwsh 的返回。',
+              'Scope: this plugin’s own fast-path and PTC runs only. Platform tool calls are not wired yet, so these caps do not trim read / grep / pwsh output.',
+            ),
+          ),
+          metrics.length
+            ? h(
+                'div',
+                { className: 'rk-scroll' },
+                h(
+                  'table',
+                  { className: 'rk-table' },
+                  h(
+                    'thead',
+                    null,
+                    h(
+                      'tr',
+                      null,
+                      h('th', null, L('轮次', 'Turn')),
+                      h('th', null, L('输入', 'In')),
+                      h('th', null, L('输出', 'Out')),
+                      h('th', null, L('工具返回字节', 'Tool bytes')),
+                      h('th', null, L('工具调用', 'Calls')),
+                      h('th', null, L('耗时', 'ms')),
+                    ),
+                  ),
+                  h(
+                    'tbody',
+                    null,
+                    metrics
+                      .slice(-6)
+                      .reverse()
+                      .map((row, i) =>
+                        h(
+                          'tr',
+                          { key: `${row.turn}-${i}` },
+                          h('td', null, String(row.turn ?? '')),
+                          h('td', null, String(row.inputTokens ?? 0)),
+                          h('td', null, String(row.outputTokens ?? 0)),
+                          h('td', null, String(row.toolResultBytesInContext ?? 0)),
+                          h('td', null, String(row.toolCallsCount ?? 0)),
+                          h('td', null, String(row.wallClockMs ?? 0)),
+                        ),
+                      ),
+                  ),
+                ),
+              )
+            : h(
+                'div',
+                { className: 'rk-empty' },
+                L(
+                  '还没有采样数据——只有经过本插件的快路径/PTC 执行才会产生。',
+                  'No samples yet — they only come from this plugin’s own fast-path/PTC runs.',
+                ),
+              ),
         ),
 
         h(

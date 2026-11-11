@@ -37,7 +37,7 @@ const state = {
   health: { status: 'healthy', version: '0.3.1', dshVersion: '0.1.0', checks: {} },
   governance: { enabled: true, audit: true, redaction: true, injection: 'annotate', sandbox: false, profile: 'default' },
   sandbox: { mode: 'workspace-write', approval: 'ask', networkDefault: 'deny', files: 3, commands: 2, network: 1, toolControl: 4, injectionGuard: true, sensitiveProtection: true },
-  context: { maxReturnBytes: 4096 },
+  context: { maxReturnBytes: 4096, fieldsProjection: true, prunerEnabled: true, compactionEnabled: true, lazyLoadTools: true },
   loop: { preset: 'code' },
   audit: [
     { timestamp: '2026-11-11T02:14:03.000Z', tool: 'read', action: 'return', result: 'SUCCESS', error: '', durationMs: 12 },
@@ -51,7 +51,10 @@ const state = {
     templates: ['echo-chain'],
     workspaces: [{ profile: 'default', root: 'D:\\work' }],
   },
-  metrics: [],
+  metrics: [
+    { turn: 12, inputTokens: 18400, outputTokens: 960, toolResultBytesInContext: 5120, toolCallsCount: 6, wallClockMs: 8400 },
+    { turn: 13, inputTokens: 21150, outputTokens: 1240, toolResultBytesInContext: 7680, toolCallsCount: 9, wallClockMs: 11200 },
+  ],
 }
 
 const THEME = `
