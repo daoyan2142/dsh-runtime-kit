@@ -73,6 +73,18 @@ window.__ModuleLoader__.load({
 .rk-table{width:100%;border-collapse:collapse;font-size:11.5px}
 .rk-table th{text-align:left;font-weight:500;color:var(--dsw-alias-label-secondary,#9a9a9a);padding:4px 6px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));white-space:nowrap}
 .rk-table td{padding:4px 6px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.rk-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.rk-strip .rk-stat{padding:8px 10px}
+.rk-zone{display:flex;align-items:baseline;gap:8px;margin-top:12px;padding:0 2px}
+.rk-zone-t{font-size:12.5px;font-weight:600;letter-spacing:.2px}
+.rk-zone-h{font-size:11.5px;color:var(--dsw-alias-label-secondary,#9a9a9a)}
+.rk-note{font-size:12px;color:var(--dsw-alias-brand-primary,#8ab4ff)}
+.rk-details{border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.28));border-radius:12px;padding:8px 16px;display:flex;flex-direction:column;gap:8px}
+.rk-details summary{cursor:pointer;font-size:12.5px;font-weight:600;list-style:none}
+.rk-details summary::-webkit-details-marker{display:none}
+.rk-details summary::before{content:'▸';display:inline-block;margin-right:6px;transition:transform .12s}
+.rk-details[open] summary::before{transform:rotate(90deg)}
+.rk-savebar{position:sticky;bottom:0;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#1b1b1d) 92%,transparent);border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));box-shadow:0 4px 18px rgba(0,0,0,.28);font-size:12px}
 .rk-chips{display:flex;flex-wrap:wrap;gap:5px}
 .rk-chip{font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:11px;padding:1px 6px;border-radius:6px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12))}
 .rk-scroll{overflow-x:auto;max-width:100%}
@@ -93,12 +105,8 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------ pieces ---
 
     function Card({ title, right, children }) {
-      return h(
-        'div',
-        { className: 'rk-card' },
-        h('div', { className: 'rk-card-head' }, h('div', { className: 'rk-card-title' }, title), right || null),
-        children,
-      )
+      const head = title || right ? h('div', { className: 'rk-card-head' }, h('div', { className: 'rk-card-title' }, title), right || null) : null
+      return h('div', { className: 'rk-card' }, head, children)
     }
 
     function Stat({ label, value, tone }) {
@@ -186,7 +194,13 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(initial || null)
       const [governance, setGovernance] = useState(initial?.governance || null)
       const [draft, setDraft] = useState(
-        initial ? { workspaces: initial.sandbox?.workspaces || [], commandDefault: initial.sandbox?.commandDefault || 'allow', networkDefault: initial.sandbox?.networkDefault || 'deny' } : null,
+        initial
+          ? {
+              workspaces: initial.sandbox?.workspaces || [],
+              commandDefault: initial.sandbox?.commandDefault || 'allow',
+              networkDefault: initial.sandbox?.networkDefault || 'deny',
+            }
+          : null,
       )
       const [wsNew, setWsNew] = useState({ profile: 'default', root: '', mode: 'workspace-write' })
       const [armed, setArmed] = useState('')
@@ -218,26 +232,9 @@ window.__ModuleLoader__.load({
         load()
       }, [load])
 
-      const save = async () => {
-        setBusy('save')
-        setNote('')
-        setError('')
-        try {
-          const value = await call('governance', { governance })
-          setGovernance(value.governance)
-          setNote(L('已保存，立即生效。', 'Saved. Takes effect immediately.'))
-          await load()
-        } catch (e) {
-          setError(String(e.message || e))
-        } finally {
-          setBusy('')
-        }
-      }
-
-      const dirty = Boolean(
+      const governanceDirty = Boolean(
         state && governance && JSON.stringify(state.governance) !== JSON.stringify(governance),
       )
-
       const sandboxDirty = Boolean(
         draft &&
           state &&
@@ -252,6 +249,77 @@ window.__ModuleLoader__.load({
               networkDefault: state.sandbox?.networkDefault || 'deny',
             }),
       )
+      const dirtyCount = (governanceDirty ? 1 : 0) + (sandboxDirty ? 1 : 0)
+
+      const save = async () => {
+        if (!dirtyCount) return
+        setBusy('save')
+        setNote('')
+        setError('')
+        try {
+          if (governanceDirty) await call('governance', { governance })
+          if (sandboxDirty) {
+            await call('sandbox', {
+              workspaces: draft.workspaces,
+              commandDefault: draft.commandDefault,
+              networkDefault: draft.networkDefault,
+            })
+          }
+          setNote(L('已保存，立即生效', 'Saved, effective now'))
+          await load()
+        } catch (e) {
+          setError(String(e.message || e))
+        } finally {
+          setBusy('')
+        }
+      }
+
+      const discard = () => {
+        if (!state) return
+        setGovernance(state.governance)
+        setDraft({
+          workspaces: state.sandbox?.workspaces || [],
+          commandDefault: state.sandbox?.commandDefault || 'allow',
+          networkDefault: state.sandbox?.networkDefault || 'deny',
+        })
+        setNote('')
+      }
+
+      // 一键推荐：安全的全开，会改输出的先观察，会拒绝的保持关闭。
+      const applyRecommended = async () => {
+        const base = governance || {}
+        setGovernance({
+          ...base,
+          enabled: true,
+          audit: true,
+          redaction: true,
+          injection: 'annotate',
+          sandbox: false,
+          truncation: { ...(base.truncation || { maxBytes: 4096, spill: true, perTool: {} }), mode: 'shadow' },
+          pruner: { ...(base.pruner || { keepTurns: 4, maxChars: 2000 }), mode: 'shadow' },
+        })
+        setBusy('recommend')
+        try {
+          await call('governance', {
+            governance: {
+              ...base,
+              enabled: true,
+              audit: true,
+              redaction: true,
+              injection: 'annotate',
+              sandbox: false,
+              truncation: { ...(base.truncation || { maxBytes: 4096, spill: true, perTool: {} }), mode: 'shadow' },
+              pruner: { ...(base.pruner || { keepTurns: 4, maxChars: 2000 }), mode: 'shadow' },
+            },
+          })
+          setNote(L('已套用推荐配置', 'Recommended settings applied'))
+          await load()
+        } catch (e) {
+          setError(String(e.message || e))
+        } finally {
+          setBusy('')
+        }
+      }
 
       const restore = async (entry) => {
         const key = entry.stamp + '/' + entry.file
@@ -278,25 +346,6 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const saveSandbox = async () => {
-        setBusy('sandbox')
-        setNote('')
-        setError('')
-        try {
-          await call('sandbox', {
-            workspaces: draft.workspaces,
-            commandDefault: draft.commandDefault,
-            networkDefault: draft.networkDefault,
-          })
-          setNote(L('沙箱配置已保存。', 'Sandbox configuration saved.'))
-          await load()
-        } catch (e) {
-          setError(String(e.message || e))
-        } finally {
-          setBusy('')
-        }
-      }
-
       const health = state?.health || {}
       const audit = state?.audit || []
       const registry = state?.registry || { tools: [], templates: [], workspaces: [] }
@@ -304,367 +353,118 @@ window.__ModuleLoader__.load({
       const context = state?.context || {}
       const metrics = state?.metrics || []
       const observed = state?.observed || {}
+      const truncation = governance?.truncation || { mode: 'off', maxBytes: 4096, spill: true, perTool: {} }
+      const projection = governance?.projection || { mode: 'off', maxLines: {} }
+      const pruner = governance?.pruner || { mode: 'off', keepTurns: 4, maxChars: 2000 }
+      const truncStats = state?.truncation || {}
       const todayEntries = Array.isArray(state?.auditToday)
         ? state.auditToday
         : (audit || []).filter((entry) => {
             const at = new Date(entry?.timestamp ?? 0)
             return !Number.isNaN(at.getTime()) && at.toDateString() === new Date().toDateString()
           })
-      const truncation = governance?.truncation || { mode: 'off', maxBytes: 4096, spill: true, perTool: {} }
-      const projection = governance?.projection || { mode: 'off', maxLines: {} }
-      const pruner = governance?.pruner || { mode: 'off', keepTurns: 4, maxChars: 2000 }
-      const truncStats = state?.truncation || {}
+
+      const on = (value) => Boolean(value)
+      const hasWorkspace = (draft?.workspaces || []).length > 0
 
       return h(
         'div',
         { className: 'rk-root' },
+        // ---------------- header: 状态 + 两个动作 ----------------
         h(
           'div',
           { className: 'rk-hero' },
           h('div', { className: 'rk-h1' }, L('运行时治理', 'Runtime governance')),
-          h(
-            'span',
-            { className: `rk-badge ${toneOf(health.status)}` },
-            health.status || (busy === 'load' ? L('读取中', 'loading') : L('未知', 'unknown')),
-          ),
-          h('div', { className: 'rk-sub' }, `v${health.version || '—'} · dsh ${health.dshVersion || '—'}`),
+          h('span', { className: `rk-badge ${toneOf(health.status)}` }, health.status || '—'),
+          h('div', { className: 'rk-sub' }, `v${health.version || '—'}`),
           h('div', { style: { flex: '1' } }),
+          h(
+            'button',
+            { className: 'rk-btn', onClick: applyRecommended, disabled: Boolean(busy) },
+            L('套用推荐', 'Recommended'),
+          ),
           h('button', { className: 'rk-btn', onClick: load, disabled: Boolean(busy) }, L('刷新', 'Refresh')),
         ),
 
+        h(
+          'div',
+          { className: 'rk-sub' },
+          L(
+            '三组从上到下：① 默认就该开的防护，不用管；② 想省 token 再开，会改变模型看到的内容；③ 会拒绝操作，先配工作区。',
+            'Three groups: (1) protection you should leave on; (2) token savers that change what the model sees; (3) gating that can block — configure a workspace first.',
+          ),
+        ),
+
         error ? h('div', { className: 'rk-err' }, error) : null,
+        note ? h('div', { className: 'rk-note' }, note) : null,
 
+        // ---------------- status strip ----------------
         h(
-          Card,
-          { title: L('总览', 'Overview') },
-          h(
-            'div',
-            { className: 'rk-grid' },
-            h(Stat, { label: L('注册工具', 'Tools'), value: registry.tools.length }),
-            h(Stat, { label: L('快路径模板', 'Templates'), value: registry.templates.length }),
-            h(Stat, { label: L('沙箱工作区', 'Workspaces'), value: registry.workspaces.length }),
-            h(Stat, { label: L('审计条数', 'Audit entries'), value: audit.length }),
-          ),
-          h(
-            'div',
-            { className: 'rk-sub' },
-            L('这些数字来自插件自身注册表，不是推测。', 'Read from the plugin registry, not guessed.'),
-          ),
+          'div',
+          { className: 'rk-strip' },
+          h(Stat, { label: L('今天调用', 'Calls today'), value: todayEntries.length }),
+          h(Stat, { label: L('被拒绝', 'Blocked'), value: observed.blocked ?? 0 }),
+          h(Stat, { label: L('截断命中', 'Truncated'), value: observed.truncated ?? 0 }),
+          h(Stat, { label: L('回收站', 'Trash'), value: (state?.trash && state.trash.files) || 0 }),
         ),
 
+        // ---------------- zone 1: 基础防护 ----------------
+        h('div', { className: 'rk-zone' }, h('span', { className: 'rk-zone-t' }, L('① 基础防护', 'Protection')), h('span', { className: 'rk-badge ok' }, L('无风险', 'safe')), h('span', { className: 'rk-zone-h' }, L('不会拒绝任何调用', 'never blocks a call'))),
         h(
           Card,
-          {
-            title: L('治理开关', 'Governance switches'),
-            right: h(
-              'button',
-              { className: 'rk-btn primary', onClick: save, disabled: !dirty || Boolean(busy) },
-              busy === 'save' ? L('保存中', 'Saving') : L('保存', 'Save'),
-            ),
-          },
-          governance
-            ? [
-                h(ToggleRow, {
-                  key: 'enabled',
-                  title: L('总开关', 'Master switch'),
-                  desc: L('关闭后钩子仍在，但每次调用都直接放行', 'Hooks stay registered; every call passes straight through'),
-                  on: governance.enabled,
-                  disabled: Boolean(busy),
-                  onChange: (on) => setGovernance({ ...governance, enabled: on }),
-                }),
-                h(ToggleRow, {
-                  key: 'audit',
-                  title: L('审计', 'Audit'),
-                  desc: L('把每次工具调用写进审计流水（只读）', 'Record every tool call (read-only)'),
-                  on: governance.audit,
-                  disabled: Boolean(busy),
-                  onChange: (on) => setGovernance({ ...governance, audit: on }),
-                }),
-                h(ToggleRow, {
-                  key: 'redaction',
-                  title: L('脱敏', 'Redaction'),
-                  desc: L('返回体里的密钥替换成 [redacted:kind]', 'Replace secrets with [redacted:kind]'),
-                  on: governance.redaction,
-                  disabled: Boolean(busy),
-                  onChange: (on) => setGovernance({ ...governance, redaction: on }),
-                }),
-                h(
-                  'div',
-                  { className: 'rk-row' },
-                  h(
-                    'div',
-                    { className: 'rk-row-main' },
-                    h('div', { className: 'rk-row-t' }, L('提示注入', 'Prompt injection')),
-                    h(
-                      'div',
-                      { className: 'rk-row-d' },
-                      L('检测工具返回里“改变模型行为”的指令', 'Detect instructions inside tool output'),
-                    ),
-                  ),
-                  h(
-                    'div',
-                    { className: 'rk-seg' },
-                    ...[
-                      ['off', L('不检测', 'off')],
-                      ['annotate', L('标注', 'annotate')],
-                      ['block', L('拦截', 'block')],
-                    ].map(([value, label]) =>
-                      h(
-                        'button',
-                        {
-                          key: value,
-                          className: governance.injection === value ? 'on' : '',
-                          onClick: () => setGovernance({ ...governance, injection: value }),
-                        },
-                        label,
-                      ),
-                    ),
-                  ),
-                ),
-                h(ToggleRow, {
-                  key: 'sandbox',
-                  title: L('沙箱拦截', 'Sandbox gate'),
-                  desc: L(
-                    '按文件/命令/网络规则拒绝调用；打开后可以真的挡住操作',
-                    'Deny calls by file/command/network rules; this one can block work',
-                  ),
-                  on: governance.sandbox,
-                  disabled: Boolean(busy),
-                  onChange: (on) => {
-                    const hasWorkspace = (state?.sandbox?.workspaces || []).length > 0
-                    if (on && !hasWorkspace) {
-                      setNote(
-                        L(
-                          '先配置工作区再打开沙箱，否则所有带路径的调用都会被拒绝。',
-                          'Configure a workspace first — otherwise every path-bearing call is denied.',
-                        ),
-                      )
-                      return
-                    }
-                    setGovernance({ ...governance, sandbox: on })
-                  },
-                }),
-                note ? h('div', { className: 'rk-sub' }, note) : null,
-              ]
-            : h('div', { className: 'rk-empty' }, L('读取中…', 'Loading…')),
-        ),
-
-        h(
-          Card,
-          {
-            title: L('沙箱与工作区', 'Sandbox and workspaces'),
-            right: h(
-              'button',
-              { className: 'rk-btn primary', onClick: saveSandbox, disabled: !sandboxDirty || Boolean(busy) },
-              L('保存', 'Save'),
-            ),
-          },
-          h(
-            'div',
-            { className: 'rk-sub' },
-            L(
-              '工作区是路径判定的边界：没有工作区时沙箱开关会被拒绝打开。命令默认“允许”，危险前缀在规则里显式拦。',
-              'A workspace is the boundary for every path decision. Without one the sandbox switch refuses to turn on. Commands default to allow; dangerous prefixes are denied by rule.',
-            ),
-          ),
-          (draft?.workspaces || []).length
-            ? h(
-                'div',
-                { style: { display: 'flex', flexDirection: 'column' } },
-                ...(draft.workspaces || []).map((ws, index) =>
-                  h(
-                    'div',
-                    { key: ws.profile, className: 'rk-row' },
-                    h(
-                      'div',
-                      { className: 'rk-row-main' },
-                      h('div', { className: 'rk-row-t' }, ws.profile),
-                      h('div', { className: 'rk-row-d' }, ws.root + ' · ' + (ws.mode || 'workspace-write')),
-                    ),
-                    h(
-                      'button',
-                      {
-                        className: 'rk-btn',
-                        onClick: () =>
-                          setDraft({ ...draft, workspaces: (draft.workspaces || []).filter((_, i) => i !== index) }),
-                      },
-                      '×',
-                    ),
-                  ),
-                ),
-              )
-            : h('div', { className: 'rk-empty' }, L('还没有工作区。', 'No workspace yet.')),
-          h(
-            'div',
-            { className: 'rk-row' },
-            h('input', {
-              className: 'rk-input',
-              style: { flex: '0 1 110px' },
-              value: wsNew.profile,
-              placeholder: L('profile', 'profile'),
-              onChange: (e) => setWsNew({ ...wsNew, profile: e.target.value }),
-            }),
-            h('input', {
-              className: 'rk-input',
-              style: { flex: '1 1 180px' },
-              value: wsNew.root,
-              placeholder: 'D:\\work',
-              onChange: (e) => setWsNew({ ...wsNew, root: e.target.value }),
-            }),
-            h(
-              'button',
-              {
-                className: 'rk-btn',
-                disabled: !wsNew.profile.trim() || !wsNew.root.trim(),
-                onClick: () => {
-                  setDraft({
-                    ...draft,
-                    workspaces: [
-                      ...(draft?.workspaces || []),
-                      { profile: wsNew.profile.trim(), root: wsNew.root.trim(), mode: wsNew.mode },
-                    ],
-                  })
-                  setWsNew({ ...wsNew, root: '' })
-                },
-              },
-              L('添加', 'Add'),
-            ),
-          ),
+          null,
+          h(ToggleRow, {
+            key: 'audit',
+            title: L('审计', 'Audit'),
+            desc: L('每次工具调用记一条，页面上的数字都来自它', 'One line per tool call; every number on this page comes from it'),
+            on: on(governance?.audit),
+            disabled: Boolean(busy),
+            onChange: (value) => setGovernance({ ...governance, audit: value }),
+          }),
+          h(ToggleRow, {
+            key: 'redaction',
+            title: L('脱敏', 'Redaction'),
+            desc: L('返回体里的密钥替换成 [redacted:kind]', 'Replace secrets with [redacted:kind]'),
+            on: on(governance?.redaction),
+            disabled: Boolean(busy),
+            onChange: (value) => setGovernance({ ...governance, redaction: value }),
+          }),
           h(
             'div',
             { className: 'rk-row' },
             h(
               'div',
               { className: 'rk-row-main' },
-              h('div', { className: 'rk-row-t' }, L('命令默认策略', 'Command default')),
-              h('div', { className: 'rk-row-d' }, L('未命中规则时怎么办', 'What happens when no rule matches')),
+              h('div', { className: 'rk-row-t' }, L('提示注入', 'Prompt injection')),
+              h('div', { className: 'rk-row-d' }, L('工具返回里出现"改变模型行为"的指令时怎么处理', 'What to do when tool output tries to steer the model')),
             ),
             h(
               'div',
               { className: 'rk-seg' },
-              ...[['allow', L('允许', 'allow')], ['ask', L('询问', 'ask')], ['deny', L('拒绝', 'deny')]].map(([value, label]) =>
+              ...[
+                ['off', L('不检测', 'off')],
+                ['annotate', L('标注', 'annotate')],
+                ['block', L('拦截', 'block')],
+              ].map(([value, label]) =>
                 h(
                   'button',
                   {
                     key: value,
-                    className: (draft?.commandDefault || 'allow') === value ? 'on' : '',
-                    onClick: () => setDraft({ ...draft, commandDefault: value }),
+                    className: governance?.injection === value ? 'on' : '',
+                    onClick: () => setGovernance({ ...governance, injection: value }),
                   },
                   label,
                 ),
               ),
             ),
           ),
-          h(
-            'div',
-            { className: 'rk-row' },
-            h(
-              'div',
-              { className: 'rk-row-main' },
-              h('div', { className: 'rk-row-t' }, L('网络默认策略', 'Network default')),
-              h('div', { className: 'rk-row-d' }, L('域名命中白名单/黑名单之外的默认行为', 'Behaviour for domains without a rule')),
-            ),
-            h(
-              'div',
-              { className: 'rk-seg' },
-              ...[['allow', L('允许', 'allow')], ['ask', L('询问', 'ask')], ['deny', L('拒绝', 'deny')]].map(([value, label]) =>
-                h(
-                  'button',
-                  {
-                    key: value,
-                    className: (draft?.networkDefault || 'deny') === value ? 'on' : '',
-                    onClick: () => setDraft({ ...draft, networkDefault: value }),
-                  },
-                  label,
-                ),
-              ),
-            ),
-          ),
-          h(
-            'div',
-            { className: 'rk-row' },
-            h(
-              'div',
-              { className: 'rk-row-main' },
-              h('div', { className: 'rk-row-t' }, L('回收站', 'Trash')),
-              h(
-                'div',
-                { className: 'rk-row-d' },
-                L(
-                  '写/删之前留的副本；启动时按保留天数与上限清理',
-                  'Copies kept before writes and deletes; pruned at startup by age and size',
-                ),
-              ),
-            ),
-            h(
-              'div',
-              { className: 'rk-sub' },
-              (state?.trash?.files || 0) +
-                L(' 个文件 · ', ' files · ') +
-                fmtBytes(state?.trash?.bytes || 0) +
-                ' · ' +
-                L('保留 ', 'keep ') +
-                (state?.trash?.retentionDays ?? 7) +
-                L(' 天 / 上限 ', 'd / cap ') +
-                (state?.trash?.maxMB ?? 256) +
-                ' MB',
-            ),
-            h(
-              'button',
-              {
-                className: 'rk-btn',
-                disabled: !(state?.trash?.files > 0) || Boolean(busy),
-                onClick: async () => {
-                  try {
-                    await call('trash/clear', {})
-                    await load()
-                  } catch (e) {
-                    setError(String(e.message || e))
-                  }
-                },
-              },
-              L('清空', 'Clear'),
-            ),
-          ),
-          (state?.trash?.recent || []).length
-            ? h(
-                'div',
-                { style: { display: 'flex', flexDirection: 'column' } },
-                ...(state.trash.recent || []).map((entry) =>
-                  h(
-                    'div',
-                    { key: entry.stamp + '/' + entry.file, className: 'rk-row' },
-                    h(
-                      'div',
-                      { className: 'rk-row-main' },
-                      h('div', { className: 'rk-row-t' }, entry.original),
-                      h('div', { className: 'rk-row-d' }, stamp(entry.at) + ' · ' + fmtBytes(entry.bytes)),
-                    ),
-                    h(
-                      'button',
-                      { className: 'rk-btn', onClick: () => restore(entry) },
-                      armed === entry.stamp + '/' + entry.file ? L('确认覆盖', 'Confirm overwrite') : L('恢复', 'Restore'),
-                    ),
-                  ),
-                ),
-              )
-            : null,
-          h(
-            'div',
-            { className: 'rk-sub' },
-            L('基线', 'Mode') + ': ' + (sandbox.mode || '—') + ' · ' + L('审批', 'Approval') + ': ' + (sandbox.approval || '—') + ' · ' + L('规则数（文件/命令/网络）', 'Rules (file/cmd/net)') + ': ' + (sandbox.files || 0) + '/' + (sandbox.commands || 0) + '/' + (sandbox.network || 0),
-          ),
         ),
+
+        // ---------------- zone 2: 上下文节省 ----------------
+        h('div', { className: 'rk-zone' }, h('span', { className: 'rk-zone-t' }, L('② 上下文节省', 'Context')), h('span', { className: 'rk-badge warn' }, L('改变输出', 'changes output')), h('span', { className: 'rk-zone-h' }, L('只在你想省 token 时打开', 'turn on only to save tokens'))),
         h(
           Card,
-          {
-            title: L('上下文治理', 'Context governance'),
-            right: h(
-              'button',
-              { className: 'rk-btn primary', onClick: save, disabled: !dirty || Boolean(busy) },
-              busy === 'save' ? L('保存中', 'Saving') : L('保存', 'Save'),
-            ),
-          },
+          null,
           h(
             'div',
             { className: 'rk-row' },
@@ -672,11 +472,7 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'rk-row-main' },
               h('div', { className: 'rk-row-t' }, L('返回体裁剪', 'Tool-output truncation')),
-              h(
-                'div',
-                { className: 'rk-row-d' },
-                L('平台工具返回超过预算就切掉；只记账不改写', 'Cut platform tool output over budget; shadow only measures'),
-              ),
+              h('div', { className: 'rk-row-d' }, L('超预算就切开，全文落到 spill 目录；"只记账"不改变任何返回', 'Cut over budget; full text goes to spill. "shadow" changes nothing')),
             ),
             h(
               'div',
@@ -697,6 +493,15 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
+            h('input', {
+              type: 'number',
+              className: 'rk-num',
+              min: 256,
+              step: 256,
+              value: truncation.maxBytes,
+              onChange: (e) =>
+                setGovernance({ ...governance, truncation: { ...truncation, maxBytes: Number(e.target.value) || 0 } }),
+            }),
           ),
           h(
             'div',
@@ -705,11 +510,7 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'rk-row-main' },
               h('div', { className: 'rk-row-t' }, L('行投影', 'Line projection')),
-              h(
-                'div',
-                { className: 'rk-row-d' },
-                L('按工具限制展示行数，切掉的部分有标注', 'Cap displayed lines per tool; the cut is annotated'),
-              ),
+              h('div', { className: 'rk-row-d' }, L('按整行裁剪，适合表格和搜索结果；不影响普通文本', 'Drops whole lines — good for tables; text is untouched')),
             ),
             h(
               'div',
@@ -748,34 +549,8 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'rk-row-main' },
-              h('div', { className: 'rk-row-t' }, L('单块预算', 'Budget per block')),
-              h('div', { className: 'rk-row-d' }, L('按字节，最小 256', 'Bytes, 256 minimum')),
-            ),
-            h('input', {
-              type: 'number',
-              className: 'rk-num',
-              min: 256,
-              step: 256,
-              value: truncation.maxBytes,
-              onChange: (e) =>
-                setGovernance({ ...governance, truncation: { ...truncation, maxBytes: Number(e.target.value) || 0 } }),
-            }),
-          ),
-          h(
-            'div',
-            { className: 'rk-row' },
-            h(
-              'div',
-              { className: 'rk-row-main' },
               h('div', { className: 'rk-row-t' }, L('历史裁剪', 'History pruning')),
-              h(
-                'div',
-                { className: 'rk-row-d' },
-                L(
-                  '观察只统计；开 = 缩短旧工具返回的文本，不删消息、不删块、最近 N 轮不动',
-                  'Observe only counts; on shortens old tool-result text — no message or block is ever removed',
-                ),
-              ),
+              h('div', { className: 'rk-row-d' }, L('缩短很旧的工具返回；不删消息、不删块、最近几轮不动', 'Shortens old tool results; never removes a message or block')),
             ),
             h(
               'div',
@@ -797,163 +572,226 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
-          (state?.prune?.steps || 0) > 0
+          truncStats.calls || state?.prune?.steps
             ? h(
                 'div',
                 { className: 'rk-sub' },
                 L(
-                  '已观察 ' +
-                    state.prune.steps +
-                    ' 步 · 可回收 ' +
-                    fmtBytes(state.prune.reclaimable) +
-                    (state.prune.saved ? ' · 已改写省下 ' + fmtBytes(state.prune.saved) : '') +
-                    ' · 最近一次结构：' +
-                    describeShape(state.prune.shape),
-                  'observed ' +
-                    state.prune.steps +
-                    ' steps · reclaimable ' +
-                    fmtBytes(state.prune.reclaimable) +
-                    (state.prune.saved ? ' · saved ' + fmtBytes(state.prune.saved) : '') +
-                    ' · last shape: ' +
-                    describeShape(state.prune.shape),
+                  '实测：裁剪命中 ' +
+                    (truncStats.truncated || 0) +
+                    ' 次，省 ' +
+                    fmtBytes(truncStats.savedBytes || 0) +
+                    (state?.prune?.steps ? ' · 历史可回收 ' + fmtBytes(state.prune.reclaimable || 0) : ''),
+                  'measured: truncated ' +
+                    (truncStats.truncated || 0) +
+                    ' times, saved ' +
+                    fmtBytes(truncStats.savedBytes || 0) +
+                    (state?.prune?.steps ? ' · history reclaimable ' + fmtBytes(state.prune.reclaimable || 0) : ''),
                 ),
               )
             : null,
-          truncStats.calls
+        ),
+
+        // ---------------- zone 3: 沙箱 ----------------
+        h('div', { className: 'rk-zone' }, h('span', { className: 'rk-zone-t' }, L('③ 沙箱保护', 'Sandbox')), h('span', { className: 'rk-badge bad' }, L('可能拒绝', 'can block')), h('span', { className: 'rk-zone-h' }, L('配好工作区再开', 'configure a workspace first'))),
+        h(
+          Card,
+          null,
+          h(ToggleRow, {
+            key: 'sandbox',
+            title: L('启用拦截', 'Enable gate'),
+            desc: hasWorkspace
+              ? L('按文件/命令/网络规则拒绝调用；危险前缀默认已拦', 'Deny by file/command/network rules')
+              : L('先添加一个工作区，否则所有带路径的调用都会被拒绝', 'Add a workspace first, or every path-bearing call is denied'),
+            on: on(governance?.sandbox),
+            disabled: Boolean(busy),
+            onChange: (value) => {
+              if (value && !hasWorkspace) {
+                setNote(L('先添加工作区再打开。', 'Add a workspace first.'))
+                return
+              }
+              setGovernance({ ...governance, sandbox: value })
+            },
+          }),
+          h('div', { className: 'rk-sub' }, L('工作区（允许读写的边界）', 'Workspaces (the boundary)')),
+          (draft?.workspaces || []).length
             ? h(
                 'div',
-                { className: 'rk-sub' },
-                L(
-                  `已观测 ${truncStats.calls} 次 · 命中截断 ${truncStats.truncated} 次 · 累计省下 ${fmtBytes(
-                    truncStats.savedBytes,
-                  )} · 落盘 ${truncStats.spillFiles} 个文件`,
-                  `observed ${truncStats.calls} · truncated ${truncStats.truncated} · saved ${fmtBytes(
-                    truncStats.savedBytes,
-                  )} · spilled ${truncStats.spillFiles}`,
-                ),
-              )
-            : null,
-          h(
-            'div',
-            { className: 'rk-grid' },
-            h(Stat, {
-              label: L('单次返回上限', 'Return cap'),
-              value: context.maxReturnBytes ? `${context.maxReturnBytes} B` : '—',
-            }),
-            h(Stat, {
-              label: L('字段投影', 'Field projection'),
-              value: context.fieldsProjection ? L('开', 'on') : L('关', 'off'),
-            }),
-            h(Stat, { label: L('pruner / compaction', 'pruner / compaction'), value: L('宿主负责', 'host') }),
-            h(Stat, { label: L('延迟工具加载', 'Lazy tool loading'), value: L('宿主负责', 'host') }),
-          ),
-          h(
-            'div',
-            { className: 'rk-sub' },
-            L(
-              '上排是声明值，只作用于本插件自己的快路径/PTC；平台的工具返回是否被裁剪，取决于上方「返回体裁剪」开关。',
-              'The four values above are declarations for this plugin’s own fast-path/PTC runs. Whether platform tool output gets cut is decided by the truncation switch above.',
-            ),
-          ),
-          metrics.length
-            ? h(
-                'div',
-                { className: 'rk-scroll' },
-                h(
-                  'table',
-                  { className: 'rk-table' },
+                { style: { display: 'flex', flexDirection: 'column' } },
+                ...(draft.workspaces || []).map((workspace, index) =>
                   h(
-                    'thead',
-                    null,
+                    'div',
+                    { key: workspace.profile, className: 'rk-row' },
                     h(
-                      'tr',
-                      null,
-                      h('th', null, L('轮次', 'Turn')),
-                      h('th', null, L('输入', 'In')),
-                      h('th', null, L('输出', 'Out')),
-                      h('th', null, L('工具返回字节', 'Tool bytes')),
-                      h('th', null, L('工具调用', 'Calls')),
-                      h('th', null, L('耗时', 'ms')),
+                      'div',
+                      { className: 'rk-row-main' },
+                      h('div', { className: 'rk-row-t' }, workspace.profile),
+                      h('div', { className: 'rk-row-d' }, workspace.root + ' · ' + (workspace.mode || 'workspace-write')),
+                    ),
+                    h(
+                      'button',
+                      {
+                        className: 'rk-btn',
+                        onClick: () =>
+                          setDraft({ ...draft, workspaces: (draft.workspaces || []).filter((_, i) => i !== index) }),
+                      },
+                      '×',
                     ),
                   ),
-                  h(
-                    'tbody',
-                    null,
-                    metrics
-                      .slice(-6)
-                      .reverse()
-                      .map((row, i) =>
-                        h(
-                          'tr',
-                          { key: `${row.turn}-${i}` },
-                          h('td', null, String(row.turn ?? '')),
-                          h('td', null, String(row.inputTokens ?? 0)),
-                          h('td', null, String(row.outputTokens ?? 0)),
-                          h('td', null, String(row.toolResultBytesInContext ?? 0)),
-                          h('td', null, String(row.toolCallsCount ?? 0)),
-                          h('td', null, String(row.wallClockMs ?? 0)),
-                        ),
-                      ),
-                  ),
                 ),
               )
-            : h(
-                'div',
-                { className: 'rk-empty' },
-                L(
-                  '还没有采样数据——只有经过本插件的快路径/PTC 执行才会产生。',
-                  'No samples yet — they only come from this plugin’s own fast-path/PTC runs.',
-                ),
-              ),
-        ),
-
-        h(
-          Card,
-          { title: L('实测指标', 'Observed') },
+            : h('div', { className: 'rk-empty' }, L('还没有工作区。', 'No workspace yet.')),
           h(
             'div',
-            { className: 'rk-grid' },
-            h(Stat, { label: L('总调用', 'Calls'), value: observed.total ?? 0 }),
-            h(Stat, { label: L('被拒绝', 'Blocked'), value: observed.blocked ?? 0 }),
-            h(Stat, { label: L('需审批', 'Asked'), value: observed.asked ?? 0 }),
-            h(Stat, { label: L('脱敏命中', 'Redacted'), value: observed.redacted ?? 0 }),
-            h(Stat, { label: L('截断命中', 'Truncated'), value: observed.truncated ?? 0 }),
-            h(Stat, { label: L('回收站副本', 'Trash copies'), value: (state?.trash && state.trash.files) || 0 }),
+            { className: 'rk-row' },
+            h('input', {
+              className: 'rk-input',
+              style: { flex: '0 1 110px' },
+              value: wsNew.profile,
+              placeholder: L('名字', 'name'),
+              onChange: (e) => setWsNew({ ...wsNew, profile: e.target.value }),
+            }),
+            h('input', {
+              className: 'rk-input',
+              style: { flex: '1 1 180px' },
+              value: wsNew.root,
+              placeholder: 'D:\\work',
+              onChange: (e) => setWsNew({ ...wsNew, root: e.target.value }),
+            }),
+            h(
+              'button',
+              {
+                className: 'rk-btn',
+                disabled: !wsNew.profile.trim() || !wsNew.root.trim(),
+                onClick: () => {
+                  setDraft({
+                    ...draft,
+                    workspaces: [
+                      ...(draft?.workspaces || []),
+                      { profile: wsNew.profile.trim(), root: wsNew.root.trim(), mode: wsNew.mode },
+                    ],
+                  })
+                  setWsNew({ ...wsNew, root: '' })
+                },
+              },
+              L('添加', 'Add'),
+            ),
           ),
-          (observed.top || []).length
-            ? h(
-                'div',
-                { className: 'rk-chips' },
-                ...observed.top.map((row) =>
-                  h('span', { key: row.name, className: 'rk-chip' }, row.name + ' × ' + row.count),
+          h(
+            'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('命令默认策略', 'Command default')),
+              h('div', { className: 'rk-row-d' }, L('没命中规则时的行为','When no rule matches')),
+            ),
+            h(
+              'div',
+              { className: 'rk-seg' },
+              ...[['allow', L('允许', 'allow')], ['ask', L('询问', 'ask')], ['deny', L('拒绝', 'deny')]].map(([value, label]) =>
+                h(
+                  'button',
+                  {
+                    key: value,
+                    className: (draft?.commandDefault || 'allow') === value ? 'on' : '',
+                    onClick: () => setDraft({ ...draft, commandDefault: value }),
+                  },
+                  label,
                 ),
-              )
-            : null,
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('网络默认策略', 'Network default')),
+              h('div', { className: 'rk-row-d' }, L('域名不在任何规则里时的行为', 'Domains without a rule')),
+            ),
+            h(
+              'div',
+              { className: 'rk-seg' },
+              ...[['allow', L('允许', 'allow')], ['ask', L('询问', 'ask')], ['deny', L('拒绝', 'deny')]].map(([value, label]) =>
+                h(
+                  'button',
+                  {
+                    key: value,
+                    className: (draft?.networkDefault || 'deny') === value ? 'on' : '',
+                    onClick: () => setDraft({ ...draft, networkDefault: value }),
+                  },
+                  label,
+                ),
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'rk-row' },
+            h(
+              'div',
+              { className: 'rk-row-main' },
+              h('div', { className: 'rk-row-t' }, L('回收站', 'Trash')),
+              h(
+                'div',
+                { className: 'rk-row-d' },
+                (state?.trash?.files || 0) +
+                  L(' 个文件 · ', ' files · ') +
+                  fmtBytes(state?.trash?.bytes || 0) +
+                  ' · ' +
+                  L('保留 ', 'keep ') +
+                  (state?.trash?.retentionDays ?? 7) +
+                  L(' 天', 'd'),
+              ),
+            ),
+            h(
+              'button',
+              {
+                className: 'rk-btn',
+                disabled: !(state?.trash?.files > 0) || Boolean(busy),
+                onClick: async () => {
+                  try {
+                    await call('trash/clear', {})
+                    await load()
+                  } catch (e) {
+                    setError(String(e.message || e))
+                  }
+                },
+              },
+              L('清空', 'Clear'),
+            ),
+          ),
+          (state?.trash?.recent || []).map((entry) =>
+            h(
+              'div',
+              { key: entry.stamp + '/' + entry.file, className: 'rk-row' },
+              h(
+                'div',
+                { className: 'rk-row-main' },
+                h('div', { className: 'rk-row-t' }, entry.original),
+                h('div', { className: 'rk-row-d' }, stamp(entry.at) + ' · ' + fmtBytes(entry.bytes)),
+              ),
+              h(
+                'button',
+                { className: 'rk-btn', onClick: () => restore(entry) },
+                armed === entry.stamp + '/' + entry.file ? L('确认覆盖', 'Confirm') : L('恢复', 'Restore'),
+              ),
+            ),
+          ),
           h(
             'div',
             { className: 'rk-sub' },
-            L(
-              '这些数字是从审计流水里数出来的（最近 200 条），不是估算；只统计经过本插件的调用。',
-              'Counted from the audit log (last 200 entries), not estimated; only calls that passed through this plugin.',
-            ),
+            L('基线 ', 'Mode ') + (sandbox.mode || '—') + ' · ' + L('审批 ', 'Approval ') + (sandbox.approval || '—') + ' · ' + L('规则 ', 'Rules ') + (sandbox.files || 0) + '/' + (sandbox.commands || 0) + '/' + (sandbox.network || 0),
           ),
         ),
 
+        // ---------------- details ----------------
         h(
-          Card,
-          {
-            title: L('审计流水', 'Audit log'),
-            right: h(
-              'div',
-              { className: 'rk-wrap' },
-              h('span', { className: 'rk-mono' }, `今天 ${todayEntries.length}`),
-              h(
-                'button',
-                { className: 'rk-btn', onClick: () => setAuditAll((value) => !value) },
-                auditAll ? L('只看今天', 'Today only') : L('展开今天的全部', 'Show all today'),
-              ),
-            ),
-          },
+          'details',
+          { className: 'rk-details' },
+          h('summary', null, L('审计流水（今天 ' + todayEntries.length + ' 条）', 'Audit log (today: ' + todayEntries.length + ')')),
           todayEntries.length
             ? h(
                 'div',
@@ -1009,15 +847,23 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'rk-sub' },
             L(
-              '只显示今天的记录（默认最近 8 条）；更早的 ' + (state?.auditOlder || 0) + ' 条不展开，需要时去日志文件里看',
-              'Today only (8 by default); ' + (state?.auditOlder || 0) + ' older entries are not listed — read the log file when needed',
+              '默认显示最近 8 条；更早的 ' + (state?.auditOlder || 0) + ' 条不在页面展开',
+              'Last 8 by default; ' + (state?.auditOlder || 0) + ' older entries are not listed',
             ),
           ),
+          todayEntries.length > 8
+            ? h(
+                'button',
+                { className: 'rk-btn', onClick: () => setAuditAll((value) => !value) },
+                auditAll ? L('收起', 'Collapse') : L('展开今天的全部', 'Show all today'),
+              )
+            : null,
         ),
 
         h(
-          Card,
-          { title: L('注册表', 'Registry') },
+          'details',
+          { className: 'rk-details' },
+          h('summary', null, L('注册表与快路径', 'Registry and fast-path')),
           h('div', { className: 'rk-sub' }, L('工具', 'Tools')),
           h(
             'div',
@@ -1039,12 +885,36 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'rk-chips' },
             ...(registry.workspaces.length
-              ? registry.workspaces.map((ws) =>
-                  h('span', { key: ws.profile, className: 'rk-chip' }, `${ws.profile} → ${ws.root}`),
+              ? registry.workspaces.map((workspace) =>
+                  h('span', { key: workspace.profile, className: 'rk-chip' }, `${workspace.profile} → ${workspace.root}`),
                 )
-              : [h('span', { key: 'none', className: 'rk-empty' }, L('未注册', 'none registered'))]),
+              : [h('span', { key: 'none', className: 'rk-empty' }, L('未注册', 'none'))]),
+          ),
+          h(
+            'div',
+            { className: 'rk-sub' },
+            L(
+              'pruner / compaction 与延迟工具加载由宿主负责（' + (context.maxReturnBytes || 4096) + ' B 是本插件自己的预算）',
+              'pruner/compaction and lazy loading are host features; ' + (context.maxReturnBytes || 4096) + ' B is this plugin own budget',
+            ),
           ),
         ),
+
+        // ---------------- sticky save ----------------
+        dirtyCount
+          ? h(
+              'div',
+              { className: 'rk-savebar' },
+              h('span', null, L('有 ' + dirtyCount + ' 处修改未保存', dirtyCount + ' unsaved change(s)')),
+              h('div', { style: { flex: '1' } }),
+              h('button', { className: 'rk-btn', onClick: discard, disabled: busy === 'save' }, L('放弃', 'Discard')),
+              h(
+                'button',
+                { className: 'rk-btn primary', onClick: save, disabled: busy === 'save' },
+                busy === 'save' ? L('保存中', 'Saving') : L('保存', 'Save'),
+              ),
+            )
+          : null,
       )
     }
 
