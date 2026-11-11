@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Render the runtime-kit page to static HTML for a visual check.
  *
  *   node scripts/render-dashboard.mjs
@@ -70,13 +70,14 @@ const THEME = `
 
 const html = `<!doctype html><html><head><meta charset="utf-8"><title>runtime-kit</title>
 <style>${THEME}</style><style>${client.__test.css}</style>
-<style>body{--stage:360px} .stage{width:var(--stage)}</style></head>
+<style>body{--stage:760px} .stage{width:var(--stage)}</style></head>
 <body><div class="stage">${renderToStaticMarkup(React.createElement(client.__test.RuntimeKitPanel, { initial: state }))}</div></body></html>`
 
 const outDir = join(process.cwd(), 'scripts', 'shots')
 await mkdir(outDir, { recursive: true })
 await writeFile(join(outDir, 'dashboard.html'), html, 'utf8')
 console.log('wrote', join(outDir, 'dashboard.html'))
+
 
 
 
